@@ -1,0 +1,988 @@
+{
+  "name": "Timetrack 01 — Employee Enrollment",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Регистрация сотрудника и лица\n`POST /webhook/timetrack/employees/enroll` — заголовок `X-Api-Token` (HR-токен). Тело (multipart или JSON): `employee_id`, `full_name`, `email`, `department`, `position`, `timezone`, `work_schedule`, `hr_external_id`, `consent_granted=true` (обязательно), `consent_document_ref`, снимок `image` (или `image_base64`).\n\nПоток: аутентификация HR → валидация и проверка согласия → upsert сотрудника + запись согласия (БД) → загрузка лица в CompreFace (subject = employee_id) → запись регистрации (только ссылка на шаблон и хэш снимка).",
+        "height": 230,
+        "width": 1500,
+        "color": 4
+      },
+      "id": "a681cc5d-77a9-52f1-ae43-16be51255afe",
+      "name": "Sticky Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Отзыв биометрии (право на удаление)\n`POST /webhook/timetrack/biometrics/revoke` — тело `{ \"employee_id\": \"...\", \"reason\": \"...\" }`. Разрешено HR-токену и самому сотруднику (его личным токеном). Удаляет шаблоны в CompreFace, деактивирует регистрации и отзывает согласие. После отзыва отметка по лицу отклоняется (`consent_missing`), ручная отметка продолжает работать.",
+        "height": 170,
+        "width": 1200,
+        "color": 5
+      },
+      "id": "b25b7333-a980-52c4-a88a-276203d68d9d",
+      "name": "Sticky Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/employees/enroll",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f1231f74-742d-5be9-81bb-904d0ec23443",
+      "name": "Enroll Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        300
+      ],
+      "webhookId": "dacf4202-b527-5011-86f6-0246f06a16e8"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9efbbb4a-70ba-5c95-bf42-6ae2f59b8276",
+              "name": "faceApiUrl",
+              "value": "http://compreface-api:8080",
+              "type": "string"
+            },
+            {
+              "id": "fa695255-a5ea-5238-a863-f442c9d39cc5",
+              "name": "detProbThreshold",
+              "value": 0.9,
+              "type": "number"
+            },
+            {
+              "id": "bc717cf5-9ced-5505-9ad5-45b5c8b4faac",
+              "name": "consentVersion",
+              "value": "v1.0",
+              "type": "string"
+            },
+            {
+              "id": "2fd238ed-7815-51fb-892c-937581aad176",
+              "name": "provider",
+              "value": "compreface",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "8438260b-0714-57ca-b63f-c799983acd63",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Адрес CompreFace, порог детекции при регистрации, версия текста согласия.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Enroll Webhook').first().json.headers['x-api-token'] || ($('Enroll Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "775a0e01-5158-5d4d-87e5-63dca87a94cc",
+      "name": "Authenticate HR",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "753d8099-d851-5934-92e5-3dc91c84509e",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4917bc8c-c0d2-5f9f-be40-21f83f51786a",
+      "name": "Is HR?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "e59737cb-3a79-59ce-8db6-3273bb258c97",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Проверка данных регистрации сотрудника и снимка лица.\nconst hook = $('Enroll Webhook').first();\nconst auth = $input.first().json;\nconst body = hook.json.body || {};\nconst problems = [];\n\nconst employeeId = String(body.employee_id ?? '').trim();\nif (!/^[A-Za-z0-9._-]{1,64}$/.test(employeeId)) problems.push('employee_id_invalid');\nconst fullName = String(body.full_name ?? '').trim();\nif (fullName.length < 2) problems.push('full_name_required');\nconst email = body.email ? String(body.email).trim() : null;\nif (email && !/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email)) problems.push('email_invalid');\n\n// согласие на обработку биометрии обязательно (GDPR ст. 9, 152-ФЗ ст. 11)\nconst consent = body.consent_granted === true || String(body.consent_granted).toLowerCase() === 'true';\nif (!consent) problems.push('consent_required');\n\nlet schedule = null;\nif (body.work_schedule) {\n  try {\n    schedule = typeof body.work_schedule === 'string' ? JSON.parse(body.work_schedule) : body.work_schedule;\n    const okShape = schedule && typeof schedule === 'object'\n      && /^\\d{2}:\\d{2}$/.test(schedule.start) && /^\\d{2}:\\d{2}$/.test(schedule.end)\n      && Array.isArray(schedule.days) && schedule.days.every((d) => Number.isInteger(d) && d >= 1 && d <= 7);\n    if (!okShape) problems.push('work_schedule_invalid');\n  } catch (e) {\n    problems.push('work_schedule_invalid');\n  }\n}\n\nconst binary = hook.binary || {};\nlet image = binary.image || Object.values(binary)[0];\nif (!image && typeof body.image_base64 === 'string' && body.image_base64.length > 0) {\n  const buffer = Buffer.from(body.image_base64.replace(/^data:[^;]+;base64,/, ''), 'base64');\n  if (buffer.length > 0) {\n    image = await this.helpers.prepareBinaryData(buffer, 'enroll.jpg', body.image_mime || 'image/jpeg');\n  }\n}\nif (!image) problems.push('image_missing');\n\nreturn [{\n  json: {\n    ok: problems.length === 0,\n    problems,\n    employee_id: employeeId,\n    full_name: fullName,\n    email,\n    department: body.department ? String(body.department).trim() : null,\n    position: body.position ? String(body.position).trim() : null,\n    timezone: body.timezone ? String(body.timezone).trim() : null,\n    work_schedule: schedule,\n    hr_external_id: body.hr_external_id ? String(body.hr_external_id) : null,\n    consent_via: body.consent_via ? String(body.consent_via) : 'api',\n    consent_document_ref: body.consent_document_ref ? String(body.consent_document_ref) : null,\n    actor: auth.client_name,\n  },\n  binary: image ? { image } : undefined,\n}];\n"
+      },
+      "id": "c3cfa1eb-05df-55da-bcb3-b8ac83e40f7a",
+      "name": "Validate Enrollment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cc7fce66-0d85-5655-9348-d2622ad4c35b",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'validation_failed', problems: $json.problems }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "d9847b9c-d5ab-5fd9-bfe6-0c53ecd4d892",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH e AS (\n  SELECT * FROM timetrack.fn_upsert_employee($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 'active', $9)\n), c AS (\n  SELECT timetrack.fn_grant_consent(e.employee_id, $10, $11, $12, $9) AS consent_id FROM e\n)\nSELECT e.employee_id, e.full_name, e.email, e.timezone, c.consent_id FROM e, c",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, $json.full_name, $json.email ?? null, $json.department ?? null, $json.position ?? null, $json.timezone ?? null, $json.work_schedule ?? null, $json.hr_external_id ?? null, $json.actor ?? null, $('Config').first().json.consentVersion, $json.consent_via ?? null, $json.consent_document_ref ?? null ] }}"
+        }
+      },
+      "id": "e4aac5bc-b039-563a-a7bf-ecaebc1f59ae",
+      "name": "Upsert Employee And Consent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "fn_upsert_employee + fn_grant_consent в одной транзакции. Согласие фиксируется до загрузки биометрии.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Postgres-нода не пропускает binary дальше — возвращаем снимок из шага валидации.\nconst info = $input.first().json;\nreturn [{ json: info, binary: $('Validate Enrollment').first().binary }];\n"
+      },
+      "id": "b21413c4-88c4-51eb-9fa7-4666aa0d4f55",
+      "name": "Attach Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.faceApiUrl }}/api/v1/recognition/faces",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "subject",
+              "value": "={{ $json.employee_id }}"
+            },
+            {
+              "name": "det_prob_threshold",
+              "value": "={{ $('Config').first().json.detProbThreshold }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "image"
+            }
+          ]
+        }
+      },
+      "id": "6f44eb36-1927-5073-a206-aa1f8349225c",
+      "name": "Register Face",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "timetrack-compreface-key",
+          "name": "CompreFace Recognition API Key"
+        }
+      },
+      "notes": "Добавляет пример лица к subject = employee_id (subject создаётся автоматически).",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Ответ CompreFace POST /api/v1/recognition/faces?subject=...\nconst info = $('Attach Image').first();\nconst resp = $input.first().json;\nconst status = Number(resp.statusCode ?? 0);\nconst body = resp.body ?? {};\nconst out = { ...info.json, ok: false, code: null, http_status: 200, message: '', face_id: null, subject: null };\nif (resp.error || status === 0 || status >= 500) {\n  out.code = 'face_service_unavailable'; out.http_status = 502;\n  out.message = 'Сервис распознавания недоступен' + (status ? ' (HTTP ' + status + ')' : '');\n} else if (status === 400 && (body.code === 28 || /no face/i.test(body.message || ''))) {\n  out.code = 'no_face'; out.http_status = 422; out.message = 'На снимке не найдено лицо — нужен фронтальный снимок';\n} else if (status === 401 || status === 403) {\n  out.code = 'face_service_auth'; out.http_status = 502; out.message = 'Неверный API-ключ сервиса распознавания';\n} else if (status === 200 || status === 201) {\n  out.ok = true; out.code = 'enrolled';\n  out.face_id = body.image_id ?? null;\n  out.subject = body.subject ?? info.json.employee_id;\n} else {\n  out.code = 'face_service_error'; out.http_status = 502; out.message = body.message || ('HTTP ' + status);\n}\nreturn [{ json: out, binary: info.binary }];\n"
+      },
+      "id": "81c6ddd1-6d2f-5b2c-9ce7-23f4f9462a01",
+      "name": "Interpret Registration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "binaryData": true,
+        "binaryPropertyName": "image",
+        "dataPropertyName": "image_hash",
+        "encoding": "hex"
+      },
+      "id": "4891b000-0150-5bab-b5c7-0437d270f610",
+      "name": "Hash Enrollment Image",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        2960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "91c24df2-6dce-5507-ba53-b22018eb6d7f",
+      "name": "Registered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT timetrack.fn_record_enrollment($1, $2, $3, $4, $5, $6) AS enrollment_id",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, $('Config').first().json.provider, $json.subject ?? $json.employee_id, $json.face_id ?? null, $json.image_hash ?? null, $json.actor ?? null ] }}"
+        }
+      },
+      "id": "fdf0ab78-c3ab-50fb-967f-cd96f2f77ae6",
+      "name": "Record Enrollment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3520,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, code: 'enrolled', employee_id: $('Interpret Registration').first().json.employee_id, full_name: $('Interpret Registration').first().json.full_name, enrollment_id: $json.enrollment_id, face_id: $('Interpret Registration').first().json.face_id, consent_id: $('Upsert Employee And Consent').first().json.consent_id }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "6fc78bf6-e2c2-55a2-98b5-b6cd899cfec7",
+      "name": "Respond Enrolled",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $json.code, message: $json.message, employee_id: $json.employee_id, note: 'Сотрудник и согласие сохранены; повторите загрузку снимка' }) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status }}"
+        }
+      },
+      "id": "a1e71ac1-43f7-5084-ae1d-b9b639d99bb2",
+      "name": "Respond Registration Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3520,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/biometrics/revoke",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4cdb13e9-8c8d-596a-99fe-a5a6469d1049",
+      "name": "Revoke Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        940
+      ],
+      "webhookId": "9d434de3-e798-5017-81ab-661b82affd29"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "43f9a498-15ee-54bb-ad53-36b3f3ac53c8",
+              "name": "faceApiUrl",
+              "value": "http://compreface-api:8080",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "e3dc688f-4cbe-5a87-8af9-1aefc1bdde1d",
+      "name": "Config (revoke)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Revoke Webhook').first().json.headers['x-api-token'] || ($('Revoke Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "9072d8f7-2c0e-5042-a071-c771ec6661ba",
+      "name": "Authenticate Revoke",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        940
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "40a1093d-85f9-5ad8-b0bf-de0cb88d6da0",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') || ($json.role === 'employee' && $json.employee_id === String($('Revoke Webhook').first().json.body?.employee_id ?? '')) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a8f53917-be25-5ee5-b7d8-e15c7872ddac",
+      "name": "Can Revoke?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "fc825a8c-f9c4-52ee-aee3-400b1536dadf",
+      "name": "Respond 401 (revoke)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Config (revoke)').first().json.faceApiUrl }}/api/v1/recognition/subjects/{{ encodeURIComponent(String($('Revoke Webhook').first().json.body?.employee_id ?? '')) }}",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "538c613c-25fb-5148-9fc4-b41ad2697e46",
+      "name": "Delete Face Templates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        940
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "timetrack-compreface-key",
+          "name": "CompreFace Recognition API Key"
+        }
+      },
+      "notes": "Удаляет subject со всеми примерами лица. 404 (subject уже нет) считается успехом.",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "81d9def4-b3e7-536a-87ff-094f51e3d808",
+              "leftValue": "={{ [200, 404].includes(Number($json.statusCode ?? 0)) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "22b47f3a-637c-5606-87d5-435c40a518c3",
+      "name": "Templates Deleted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT enrollments_deactivated, consents_revoked FROM timetrack.fn_revoke_biometrics($1, $2, $3, $4)",
+        "options": {
+          "queryReplacement": "={{ [ String($('Revoke Webhook').first().json.body?.employee_id ?? ''), $('Revoke Webhook').first().json.body?.reason ?? 'revoke_request', $('Authenticate Revoke').first().json.client_name ?? null, $('Authenticate Revoke').first().json.role ?? null ] }}"
+        }
+      },
+      "id": "641fd7df-918e-5255-bb5f-25be548af451",
+      "name": "Revoke In Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        940
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, code: 'revoked', employee_id: String($('Revoke Webhook').first().json.body?.employee_id ?? ''), enrollments_deactivated: $json.enrollments_deactivated, consents_revoked: $json.consents_revoked, face_service_status: $('Delete Face Templates').first().json.statusCode ?? null }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "80a3da1a-f006-5172-8791-2c640ca02e45",
+      "name": "Respond Revoked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2120,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'face_service_error', message: 'Не удалось удалить шаблоны в сервисе распознавания; данные в БД не изменены', face_service_status: $json.statusCode ?? null }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "5f871516-488b-50a1-aabd-fec77db18964",
+      "name": "Respond Revoke Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        1140
+      ]
+    }
+  ],
+  "connections": {
+    "Enroll Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Authenticate HR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate HR": {
+      "main": [
+        [
+          {
+            "node": "Is HR?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is HR?": {
+      "main": [
+        [
+          {
+            "node": "Validate Enrollment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Enrollment": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Upsert Employee And Consent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Employee And Consent": {
+      "main": [
+        [
+          {
+            "node": "Attach Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Image": {
+      "main": [
+        [
+          {
+            "node": "Register Face",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Face": {
+      "main": [
+        [
+          {
+            "node": "Interpret Registration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpret Registration": {
+      "main": [
+        [
+          {
+            "node": "Hash Enrollment Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Enrollment Image": {
+      "main": [
+        [
+          {
+            "node": "Registered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registered?": {
+      "main": [
+        [
+          {
+            "node": "Record Enrollment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Registration Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Enrollment": {
+      "main": [
+        [
+          {
+            "node": "Respond Enrolled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revoke Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config (revoke)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (revoke)": {
+      "main": [
+        [
+          {
+            "node": "Authenticate Revoke",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate Revoke": {
+      "main": [
+        [
+          {
+            "node": "Can Revoke?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Revoke?": {
+      "main": [
+        [
+          {
+            "node": "Delete Face Templates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (revoke)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Face Templates": {
+      "main": [
+        [
+          {
+            "node": "Templates Deleted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Templates Deleted?": {
+      "main": [
+        [
+          {
+            "node": "Revoke In Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Revoke Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revoke In Database": {
+      "main": [
+        [
+          {
+            "node": "Respond Revoked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Регистрация сотрудника и его лица (с фиксацией согласия), отзыв биометрии"
+  },
+  "tags": [
+    {
+      "name": "timetrack"
+    }
+  ],
+  "active": false
+}

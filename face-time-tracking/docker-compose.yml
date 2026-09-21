@@ -1,0 +1,140 @@
+# =============================================================================
+#  Face Time Tracking — локальный/пилотный стенд
+#    n8n (воркфлоу) + PostgreSQL (учёт времени и БД n8n) + CompreFace (распознавание лиц)
+#
+#  Запуск:   cp .env.example .env && docker compose up -d
+#  n8n:      http://localhost:5678         CompreFace UI: http://localhost:8000
+#
+#  Блок CompreFace повторяет официальный docker-compose проекта (exadel/CompreFace,
+#  ветка 1.2.x). При обновлении CompreFace сверяйте его с upstream.
+# =============================================================================
+
+volumes:
+  timetrack-postgres:
+  n8n-data:
+  compreface-postgres:
+
+services:
+  # ---------------------------------------------------------------- Postgres
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${TT_DB_USER:-timetrack}
+      POSTGRES_PASSWORD: ${TT_DB_PASSWORD:?set TT_DB_PASSWORD in .env}
+      POSTGRES_DB: ${TT_DB_NAME:-timetrack}
+    volumes:
+      - timetrack-postgres:/var/lib/postgresql/data
+      # схема применяется один раз при инициализации тома
+      - ./db/000_create_n8n_database.sql:/docker-entrypoint-initdb.d/000_create_n8n_database.sql:ro
+      - ./db/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      # демо-данные — только для стенда; закомментируйте для продакшена
+      - ./db/002_seed_demo.sql:/docker-entrypoint-initdb.d/002_seed_demo.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TT_DB_USER:-timetrack} -d ${TT_DB_NAME:-timetrack}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # --------------------------------------------------------------------- n8n
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      # база самого n8n — в том же Postgres, отдельная БД
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${TT_DB_USER:-timetrack}
+      DB_POSTGRESDB_PASSWORD: ${TT_DB_PASSWORD}
+      # приватность: не держать данные выполнений (в них могут быть снимки, присланные как base64) дольше 7 дней
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-50000}
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_PAYLOAD_SIZE_MAX: ${N8N_PAYLOAD_SIZE_MAX:-16}
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    volumes:
+      - n8n-data:/home/node/.n8n
+      # воркфлоу для импорта командой: docker compose exec n8n n8n import:workflow --separate --input=/workflows
+      - ./workflows:/workflows:ro
+
+  # -------------------------------------------------------------- CompreFace
+  compreface-postgres-db:
+    image: ${CF_REGISTRY:-exadel/}compreface-postgres-db:${CF_VERSION:-1.2.0}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${CF_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:-postgres}
+      POSTGRES_DB: frs
+    volumes:
+      - compreface-postgres:/var/lib/postgresql/data
+
+  compreface-admin:
+    image: ${CF_REGISTRY:-exadel/}compreface-admin:${CF_VERSION:-1.2.0}
+    restart: unless-stopped
+    depends_on:
+      - compreface-postgres-db
+      - compreface-api
+    environment:
+      POSTGRES_USER: ${CF_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:-postgres}
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+      SPRING_PROFILES_ACTIVE: dev
+      ENABLE_EMAIL_SERVER: "false"
+      ADMIN_JAVA_OPTS: ${CF_ADMIN_JAVA_OPTS:--Xmx1g}
+      MAX_FILE_SIZE: ${CF_MAX_FILE_SIZE:-5MB}
+      MAX_REQUEST_SIZE: ${CF_MAX_REQUEST_SIZE:-10MB}B
+
+  compreface-api:
+    image: ${CF_REGISTRY:-exadel/}compreface-api:${CF_VERSION:-1.2.0}
+    restart: unless-stopped
+    depends_on:
+      - compreface-postgres-db
+    environment:
+      POSTGRES_USER: ${CF_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:-postgres}
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+      SPRING_PROFILES_ACTIVE: dev
+      API_JAVA_OPTS: ${CF_API_JAVA_OPTS:--Xmx2g}
+      # приватность: не хранить исходные фото в CompreFace, только эмбеддинги
+      SAVE_IMAGES_TO_DB: "false"
+      MAX_FILE_SIZE: ${CF_MAX_FILE_SIZE:-5MB}
+      MAX_REQUEST_SIZE: ${CF_MAX_REQUEST_SIZE:-10MB}B
+      CONNECTION_TIMEOUT: 10000
+      READ_TIMEOUT: 60000
+
+  compreface-fe:
+    image: ${CF_REGISTRY:-exadel/}compreface-fe:${CF_VERSION:-1.2.0}
+    restart: unless-stopped
+    depends_on:
+      - compreface-api
+      - compreface-admin
+    ports:
+      - "${CF_UI_PORT:-8000}:80"
+    environment:
+      CLIENT_MAX_BODY_SIZE: ${CF_MAX_REQUEST_SIZE:-10MB}
+      PROXY_READ_TIMEOUT: 60000ms
+      PROXY_CONNECT_TIMEOUT: 10000ms
+
+  compreface-core:
+    image: ${CF_REGISTRY:-exadel/}compreface-core:${CF_VERSION:-1.2.0}
+    restart: unless-stopped
+    environment:
+      ML_PORT: 3000
+      IMG_LENGTH_LIMIT: ${CF_MAX_DETECT_SIZE:-640}
+      UWSGI_PROCESSES: ${CF_UWSGI_PROCESSES:-2}
+      UWSGI_THREADS: ${CF_UWSGI_THREADS:-1}

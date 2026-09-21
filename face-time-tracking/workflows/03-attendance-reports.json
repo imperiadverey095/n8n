@@ -1,0 +1,628 @@
+{
+  "name": "Timetrack 03 — Attendance Reports",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Отчёты по запросу\n`GET /webhook/timetrack/reports?type=standard|detailed|summary&format=json|csv|html&from=YYYY-MM-DD&to=YYYY-MM-DD&employee_id=&department=`\n\nЗаголовок `X-Api-Token`: HR-токен видит всех, личный токен сотрудника — только себя. Период по умолчанию — текущий месяц. Данные считает `timetrack.fn_timesheet()`; форматирование — в ноде Build Report.\n\n* **summary** — итоги по сотрудникам; **standard** — табель по дням; **detailed** — дни + сессии + корректировки.",
+        "height": 230,
+        "width": 1500,
+        "color": 4
+      },
+      "id": "e91588a3-87a0-58c7-81b6-8b264524c194",
+      "name": "Sticky Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "timetrack/reports",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "90602a0a-5e5c-5530-a2b0-7c89462bf670",
+      "name": "Report Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        300
+      ],
+      "webhookId": "6e90f39a-efab-5909-bd3c-c2ff8a75da06"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "53b71c4b-f3cc-5fab-9a64-aad3b55f9b40",
+              "name": "maxPeriodDays",
+              "value": 366,
+              "type": "number"
+            },
+            {
+              "id": "bf318778-99da-543e-b24c-c4d866165b22",
+              "name": "csvDelimiter",
+              "value": ";",
+              "type": "string"
+            },
+            {
+              "id": "254e4f07-c8e3-5e1c-92bd-a5a931caf443",
+              "name": "companyName",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "ba7d45ab-3c17-5897-872f-70e8fd82cdc2",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "csvDelimiter \";\" удобен для Excel с русской локалью.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Report Webhook').first().json.headers['x-api-token'] || ($('Report Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "45947d2c-7f70-5a55-8d6a-db5b40f35f9a",
+      "name": "Authenticate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "59c69584-650f-5796-8320-5c4675a61154",
+              "leftValue": "={{ ['hr', 'system', 'employee'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5e801b3e-33ca-55e9-b960-beb8fae771fd",
+      "name": "Is Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "e87c1394-17ac-5436-b399-31d5d18f968d",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Параметры отчёта: период, тип, формат, область (сотрудник/подразделение).\nconst q = $('Report Webhook').first().json.query || {};\nconst auth = $input.first().json;\nconst cfg = $('Config').first().json;\nconst problems = [];\n\nconst type = ['standard', 'detailed', 'summary'].includes(q.type) ? q.type : 'standard';\nconst format = ['json', 'csv', 'html'].includes(q.format) ? q.format : 'json';\n\nconst isDate = (s) => typeof s === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));\nconst today = new Date();\nconst defFrom = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)).toISOString().slice(0, 10);\nconst defTo = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);\nconst from = isDate(q.from) ? q.from : defFrom;\nconst to = isDate(q.to) ? q.to : defTo;\nif (from > to) problems.push('from_after_to');\nif ((Date.parse(to) - Date.parse(from)) / 86400000 > cfg.maxPeriodDays) problems.push('period_too_long');\n\nlet employeeId = q.employee_id ? String(q.employee_id) : null;\nlet department = q.department ? String(q.department) : null;\nif (auth.role === 'employee') {\n  // сотрудник видит только собственный табель\n  employeeId = auth.employee_id;\n  department = null;\n}\nif (employeeId && !/^[A-Za-z0-9._-]{1,64}$/.test(employeeId)) problems.push('employee_id_invalid');\n\nreturn [{\n  json: {\n    ok: problems.length === 0,\n    problems,\n    type, format, from, to,\n    employee_id: employeeId,\n    department,\n    include_inactive: String(q.include_inactive) === 'true',\n    requester: auth.client_name,\n    requester_role: auth.role,\n    csv_delimiter: cfg.csvDelimiter,\n    company_name: cfg.companyName,\n  },\n}];\n"
+      },
+      "id": "d14799f4-042b-5c98-83b9-735070b10853",
+      "name": "Resolve Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0d3bb822-a381-5c55-aaf8-3a4133278464",
+      "name": "Params Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'bad_request', problems: $json.problems }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "f0ce75c5-ffc7-597c-b85b-e9b567de1cea",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT employee, days, sessions, corrections, totals\n  FROM timetrack.fn_timesheet($1, $2::date, $3::date, $4, $5::boolean)",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id ?? null, $json.from, $json.to, $json.department ?? null, $json.include_inactive === true ] }}"
+        }
+      },
+      "id": "1b0a609f-e873-5542-9f1f-8e9c56728723",
+      "name": "Load Timesheet",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fmtMin = (m) => {\n  const n = Number(m) || 0;\n  return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');\n};\nconst fmtTime = (iso, tz) => {\n  if (!iso) return '';\n  try {\n    return new Intl.DateTimeFormat('ru-RU', { timeZone: tz || 'UTC', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));\n  } catch (e) { return String(iso).slice(11, 16); }\n};\nconst fmtDateTime = (iso, tz) => {\n  if (!iso) return '';\n  try {\n    return new Intl.DateTimeFormat('ru-RU', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));\n  } catch (e) { return String(iso); }\n};\nconst STATUS_RU = { present: 'присутствовал', late: 'опоздание', incomplete: 'не закрыта смена', absent: 'отсутствие', day_off: 'выходной' };\nconst esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch]));\n\nfunction dayRows(ts) {\n  const tz = ts.employee.timezone;\n  return (ts.days || []).map((d) => ({\n    employee_id: ts.employee.employee_id,\n    full_name: ts.employee.full_name,\n    department: ts.employee.department ?? '',\n    date: d.work_date,\n    scheduled: d.scheduled ? 'да' : 'нет',\n    status: STATUS_RU[d.status] || d.status,\n    first_in: fmtTime(d.first_in, tz),\n    last_out: fmtTime(d.last_out, tz),\n    sessions: d.sessions,\n    worked: fmtMin(d.worked_minutes),\n    worked_minutes: d.worked_minutes,\n    breaks: fmtMin(d.break_minutes),\n    scheduled_minutes: d.scheduled_minutes,\n    late_minutes: d.late_minutes,\n    early_leave_minutes: d.early_leave_minutes,\n    overtime_minutes: d.overtime_minutes,\n  }));\n}\n\nfunction summaryRow(ts) {\n  const t = ts.totals || {};\n  return {\n    employee_id: ts.employee.employee_id,\n    full_name: ts.employee.full_name,\n    department: ts.employee.department ?? '',\n    position: ts.employee.position ?? '',\n    scheduled_days: t.scheduled_days ?? 0,\n    days_present: t.days_present ?? 0,\n    days_absent: t.days_absent ?? 0,\n    days_incomplete: t.days_incomplete ?? 0,\n    late_days: t.late_days ?? 0,\n    scheduled_hours: fmtMin(t.scheduled_minutes),\n    worked_hours: fmtMin(t.worked_minutes),\n    worked_minutes: t.worked_minutes ?? 0,\n    late_minutes: t.late_minutes ?? 0,\n    early_leave_minutes: t.early_leave_minutes ?? 0,\n    overtime_hours: fmtMin(t.overtime_minutes),\n    overtime_minutes: t.overtime_minutes ?? 0,\n  };\n}\n\nfunction sessionRows(ts) {\n  const tz = ts.employee.timezone;\n  return (ts.sessions || []).map((s) => ({\n    employee_id: ts.employee.employee_id,\n    full_name: ts.employee.full_name,\n    date: s.work_date,\n    check_in: fmtDateTime(s.check_in, tz),\n    check_out: fmtDateTime(s.check_out, tz),\n    worked: s.worked_minutes == null ? '' : fmtMin(s.worked_minutes),\n    in_source: s.in_source,\n    out_source: s.out_source ?? '',\n    in_event_id: s.in_event_id,\n    out_event_id: s.out_event_id ?? '',\n    incomplete: s.incomplete ? 'да' : 'нет',\n  }));\n}\n\nfunction correctionRows(ts) {\n  const tz = ts.employee.timezone;\n  return (ts.corrections || []).map((c) => ({\n    employee_id: ts.employee.employee_id,\n    full_name: ts.employee.full_name,\n    request_id: c.id,\n    action: c.action,\n    event_id: c.event_id ?? '',\n    requested_type: c.requested_type ?? '',\n    requested_time: fmtDateTime(c.requested_time, tz),\n    reason: c.reason,\n    status: c.status,\n    reviewed_by: c.reviewed_by ?? '',\n    reviewed_at: fmtDateTime(c.reviewed_at, tz),\n    review_comment: c.review_comment ?? '',\n    created_at: fmtDateTime(c.created_at, tz),\n  }));\n}\n\nfunction htmlTable(rows, columns) {\n  if (!rows.length) return '<p><i>Нет данных</i></p>';\n  const head = columns.map((c) => '<th>' + esc(c.title) + '</th>').join('');\n  const body = rows.map((r) => '<tr>' + columns.map((c) => '<td>' + esc(r[c.key]) + '</td>').join('') + '</tr>').join('');\n  return '<table><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';\n}\n\nconst DAY_COLUMNS = [\n  { key: 'date', title: 'Дата' }, { key: 'status', title: 'Статус' }, { key: 'first_in', title: 'Приход' },\n  { key: 'last_out', title: 'Уход' }, { key: 'worked', title: 'Отработано' }, { key: 'breaks', title: 'Перерывы' },\n  { key: 'late_minutes', title: 'Опоздание, мин' }, { key: 'early_leave_minutes', title: 'Ранний уход, мин' },\n  { key: 'overtime_minutes', title: 'Сверхурочно, мин' },\n];\nconst SUMMARY_COLUMNS = [\n  { key: 'employee_id', title: 'Табельный №' }, { key: 'full_name', title: 'Сотрудник' }, { key: 'department', title: 'Подразделение' },\n  { key: 'scheduled_days', title: 'Плановых дней' }, { key: 'days_present', title: 'Отработано дней' },\n  { key: 'days_absent', title: 'Отсутствий' }, { key: 'days_incomplete', title: 'Незакрытых смен' }, { key: 'late_days', title: 'Опозданий' },\n  { key: 'scheduled_hours', title: 'План, ч' }, { key: 'worked_hours', title: 'Факт, ч' }, { key: 'overtime_hours', title: 'Сверхурочно, ч' },\n];\nconst SESSION_COLUMNS = [\n  { key: 'date', title: 'Дата' }, { key: 'check_in', title: 'Приход' }, { key: 'check_out', title: 'Уход' },\n  { key: 'worked', title: 'Длительность' }, { key: 'in_source', title: 'Источник прихода' }, { key: 'out_source', title: 'Источник ухода' },\n  { key: 'in_event_id', title: 'ID прихода' }, { key: 'out_event_id', title: 'ID ухода' },\n];\nconst CORRECTION_COLUMNS = [\n  { key: 'created_at', title: 'Создан' }, { key: 'action', title: 'Действие' }, { key: 'requested_type', title: 'Тип' },\n  { key: 'requested_time', title: 'Время' }, { key: 'reason', title: 'Причина' }, { key: 'status', title: 'Статус' },\n  { key: 'reviewed_by', title: 'Рассмотрел' }, { key: 'review_comment', title: 'Комментарий' },\n];\n\nfunction htmlDocument(title, sections) {\n  return '<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><title>' + esc(title) + '</title>'\n    + '<style>body{font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#1f2933;margin:24px}'\n    + 'h1{font-size:20px}h2{font-size:16px;margin-top:28px}h3{font-size:14px;margin:18px 0 6px}'\n    + 'table{border-collapse:collapse;width:100%;margin:8px 0 16px}th,td{border:1px solid #d3dce6;padding:5px 8px;text-align:left}'\n    + 'th{background:#f0f4f8}tr:nth-child(even) td{background:#fafbfc}.muted{color:#627d98}</style></head><body>'\n    + '<h1>' + esc(title) + '</h1>' + sections.join('') + '</body></html>';\n}\n\nconst p = $('Resolve Parameters').first().json;\nconst timesheets = $input.all().map((i) => i.json).filter((r) => r && r.employee);\nconst period = p.from + ' — ' + p.to;\nconst meta = { type: p.type, format: p.format, from: p.from, to: p.to, employees: timesheets.length, generated_at: new Date().toISOString(), requested_by: p.requester };\n\n// ---------- JSON ----------\nif (p.format === 'json') {\n  let data;\n  if (p.type === 'summary') {\n    data = timesheets.map((ts) => ({ employee: ts.employee, totals: ts.totals }));\n  } else if (p.type === 'standard') {\n    data = timesheets.map((ts) => ({ employee: ts.employee, totals: ts.totals, days: ts.days }));\n  } else {\n    data = timesheets;\n  }\n  return [{ json: { ok: true, report: meta, data } }];\n}\n\n// ---------- CSV: плоские строки ----------\nif (p.format === 'csv') {\n  let rows = [];\n  if (p.type === 'summary') rows = timesheets.map(summaryRow);\n  else if (p.type === 'standard') rows = timesheets.flatMap(dayRows);\n  else rows = timesheets.flatMap((ts) => dayRows(ts).map((r) => ({ section: 'day', ...r }))\n      .concat(sessionRows(ts).map((r) => ({ section: 'session', ...r })))\n      .concat(correctionRows(ts).map((r) => ({ section: 'correction', ...r }))));\n  if (!rows.length) rows = [{ info: 'Нет данных за период ' + period }];\n  return rows.map((r) => ({ json: r }));\n}\n\n// ---------- HTML ----------\nconst sections = [];\nsections.push('<p class=\"muted\">Период: ' + esc(period) + ' · Сотрудников: ' + timesheets.length\n  + ' · Сформировано: ' + esc(new Date().toISOString().replace('T', ' ').slice(0, 16)) + ' UTC</p>');\nsections.push('<h2>Сводка</h2>' + htmlTable(timesheets.map(summaryRow), SUMMARY_COLUMNS));\nif (p.type !== 'summary') {\n  for (const ts of timesheets) {\n    sections.push('<h2>' + esc(ts.employee.full_name) + ' <span class=\"muted\">(' + esc(ts.employee.employee_id) + ', '\n      + esc(ts.employee.department ?? '—') + ', ' + esc(ts.employee.timezone) + ')</span></h2>');\n    sections.push('<h3>По дням</h3>' + htmlTable(dayRows(ts), DAY_COLUMNS));\n    if (p.type === 'detailed') {\n      sections.push('<h3>Сессии</h3>' + htmlTable(sessionRows(ts), SESSION_COLUMNS));\n      sections.push('<h3>Корректировки</h3>' + htmlTable(correctionRows(ts), CORRECTION_COLUMNS));\n    }\n  }\n}\nconst title = (p.company_name ? p.company_name + ' · ' : '') + 'Табель учёта рабочего времени ' + period;\nreturn [{ json: { html: htmlDocument(title, sections), report: meta } }];\n"
+      },
+      "id": "300db7b6-e119-5ac2-bd81-d3bc18c471fd",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT timetrack.fn_audit($1, $2, 'report.generated', 'report', $3, $4::jsonb) AS audit_id",
+        "options": {
+          "queryReplacement": "={{ [ $('Resolve Parameters').first().json.requester ?? null, $('Resolve Parameters').first().json.requester_role ?? null, $('Resolve Parameters').first().json.type, ({ from: $('Resolve Parameters').first().json.from, to: $('Resolve Parameters').first().json.to, employee_id: $('Resolve Parameters').first().json.employee_id ?? null, department: $('Resolve Parameters').first().json.department ?? null, format: $('Resolve Parameters').first().json.format }) ] }}"
+        }
+      },
+      "id": "38e7c73e-3f81-5b22-b60c-e7ac82f8d9ac",
+      "name": "Audit Report Access",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2400,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Кто и какой отчёт запрашивал (подотчётность по GDPR).",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "eb419f55-37e8-5fed-9844-70002362470d",
+                    "leftValue": "={{ $('Resolve Parameters').first().json.format }}",
+                    "rightValue": "json",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "json"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d89fd161-48ea-5a80-a3a7-fea1d2e3b8e8",
+                    "leftValue": "={{ $('Resolve Parameters').first().json.format }}",
+                    "rightValue": "csv",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "csv"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "3256d660-ea7f-54c0-a1b9-b3a101afd09a",
+                    "leftValue": "={{ $('Resolve Parameters').first().json.format }}",
+                    "rightValue": "html",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "html"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "af84775f-26cd-5882-a25f-853c5dc6b8f6",
+      "name": "Route By Format",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "7b846296-d2c4-5060-8fff-50f5311cc906",
+      "name": "Respond JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "=timesheet_{{ $('Resolve Parameters').first().json.from }}_{{ $('Resolve Parameters').first().json.to }}.csv",
+          "headerRow": true,
+          "delimiter": "={{ $('Resolve Parameters').first().json.csv_delimiter }}"
+        }
+      },
+      "id": "6a1267b1-2340-51b1-bdd7-1309466d093f",
+      "name": "Convert To CSV",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "responseDataSource": "automatically",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/csv; charset=utf-8"
+              },
+              {
+                "name": "Content-Disposition",
+                "value": "=attachment; filename=\"timesheet_{{ $('Resolve Parameters').first().json.from }}_{{ $('Resolve Parameters').first().json.to }}.csv\""
+              }
+            ]
+          }
+        }
+      },
+      "id": "ecbabe71-6c72-528f-b8f8-f2484c3b3fb7",
+      "name": "Respond CSV",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8152f726-893e-5a30-beed-db392645b623",
+      "name": "Respond HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Report Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Authenticate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate": {
+      "main": [
+        [
+          {
+            "node": "Is Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Resolve Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Parameters": {
+      "main": [
+        [
+          {
+            "node": "Params Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Params Valid?": {
+      "main": [
+        [
+          {
+            "node": "Load Timesheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Timesheet": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Route By Format",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Audit Report Access",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route By Format": {
+      "main": [
+        [
+          {
+            "node": "Respond JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Convert To CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert To CSV": {
+      "main": [
+        [
+          {
+            "node": "Respond CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Табели и отчёты по посещаемости по запросу: standard / detailed / summary в json, csv или html"
+  },
+  "tags": [
+    {
+      "name": "timetrack"
+    }
+  ],
+  "active": false
+}
