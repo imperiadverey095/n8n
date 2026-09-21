@@ -1,0 +1,119 @@
+{
+  "ok": true,
+  "report": {
+    "type": "summary",
+    "format": "json",
+    "from": "2026-09-21",
+    "to": "2026-09-27",
+    "employees": 3,
+    "generated_at": "2026-09-21T22:50:38.697Z",
+    "requested_by": "HR portal"
+  },
+  "data": [
+    {
+      "employee": {
+        "email": "ivanov@example.com",
+        "status": "active",
+        "position": "Кладовщик",
+        "timezone": "Europe/Moscow",
+        "full_name": "Иванов Иван Иванович",
+        "department": "Склад",
+        "employee_id": "EMP-001",
+        "work_schedule": {
+          "end": "18:00",
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "09:00",
+          "break_minutes": 60
+        }
+      },
+      "totals": {
+        "late_days": 1,
+        "days_absent": 4,
+        "days_present": 1,
+        "late_minutes": 5,
+        "scheduled_days": 5,
+        "worked_minutes": 509,
+        "days_incomplete": 0,
+        "overtime_minutes": 29,
+        "scheduled_minutes": 2400,
+        "early_leave_minutes": 0
+      }
+    },
+    {
+      "employee": {
+        "email": "petrova@example.com",
+        "status": "active",
+        "position": "Бухгалтер",
+        "timezone": "Europe/Moscow",
+        "full_name": "Петрова Анна Сергеевна",
+        "department": "Офис",
+        "employee_id": "EMP-002",
+        "work_schedule": {
+          "end": "19:00",
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "10:00",
+          "break_minutes": 60
+        }
+      },
+      "totals": {
+        "late_days": 0,
+        "days_absent": 5,
+        "days_present": 0,
+        "late_minutes": 0,
+        "scheduled_days": 5,
+        "worked_minutes": 0,
+        "days_incomplete": 0,
+        "overtime_minutes": 0,
+        "scheduled_minutes": 2400,
+        "early_leave_minutes": 0
+      }
+    },
+    {
+      "employee": {
+        "email": "sidorov@example.com",
+        "status": "active",
+        "position": "Грузчик",
+        "timezone": "Europe/Moscow",
+        "full_name": "Сидоров Пётр",
+        "department": "Склад",
+        "employee_id": "EMP-003",
+        "work_schedule": {
+          "end": "17:00",
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "08:00",
+          "break_minutes": 60
+        }
+      },
+      "totals": {
+        "late_days": 1,
+        "days_absent": 4,
+        "days_present": 1,
+        "late_minutes": 3,
+        "scheduled_days": 5,
+        "worked_minutes": 507,
+        "days_incomplete": 0,
+        "overtime_minutes": 27,
+        "scheduled_minutes": 2400,
+        "early_leave_minutes": 0
+      }
+    }
+  ]
+}

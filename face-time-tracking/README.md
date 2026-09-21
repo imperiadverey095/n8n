@@ -38,6 +38,7 @@ flowchart LR
 | `db/900_selftest.sql`, `scripts/test-db.sh` | самотест схемы (7 групп сценариев, откатывается) |
 | `db/002_seed_demo.sql` | демо-сотрудники, токены и история для стенда |
 | `docker-compose.yml`, `.env.example` | стенд: n8n + PostgreSQL + CompreFace |
+| `docs/walkthrough.md`, `examples/` | разбор на примере одного рабочего дня: реальный прогон, ответы терминалу, отчёты, скриншот; `examples/run-demo.sh` воспроизводит всё одной командой |
 | `docs/api.md` | контракты всех эндпоинтов |
 | `docs/reports.md` | правила расчёта табеля и типы отчётов |
 | `docs/hr-integration.md` | outbox, форматы событий, входящая синхронизация |
