@@ -25,7 +25,7 @@
 | `event_type` | нет | `check_in`, `check_out` или `auto` (по умолчанию: чередование) |
 | `request_id` | нет | ключ идемпотентности (повтор запроса вернёт то же событие, `duplicate: true`) |
 | `device_id`, `location` | нет | идентификатор терминала и место |
-| `captured_at` | нет | время снимка ISO 8601 для офлайн-очереди терминала (принимается, если не старше 24 ч) |
+| `captured_at` | нет | время снимка ISO 8601 для офлайн-очереди терминала (принимается, если не старше `maxBackdateHours` в ноде Config — по умолчанию 24 ч; иначе событие пишется текущим временем и помечается в метаданных) |
 | `employee_id` | нет | ожидаемый сотрудник (защита от подмены: несовпадение → `403 employee_mismatch`) |
 | `liveness_score` | нет | оценка «живости» от клиентского SDK (0..1), сохраняется в событии |
 
@@ -81,7 +81,32 @@ JSON: `{ "employee_id": "EMP-001", "reason": "employee_request" }`. Удаляе
     "timezone": "Europe/Moscow", "work_schedule": {…}, "hr_external_id": "…", "status": "active|inactive|terminated" }
 ] }
 ```
-Ответ: `{ ok, processed, updated, failed, errors[] }`. `status = terminated` запускает удаление биометрии через N дней (воркфлоу 07).
+Ответ: `{ ok, processed, updated, failed, errors[] }`. `status = terminated` запускает удаление биометрии через N дней (воркфлоу 07). Поле `calendar_code` назначает сотруднику производственный календарь.
+
+### `POST /timetrack/hr/absences` — отпуска, больничные, командировки *(hr/system)*
+
+```json
+{ "absences": [
+  { "employee_id": "EMP-002", "type": "vacation", "date_from": "2026-09-21", "date_to": "2026-09-25",
+    "status": "approved", "external_id": "HR-VAC-7781", "comment": "Ежегодный отпуск" }
+] }
+```
+
+`type`: `vacation`, `sick_leave`, `business_trip`, `remote`, `unpaid_leave`, `other`. `status`: `planned`, `approved` (по умолчанию), `cancelled`. Командировка и удалённая работа по умолчанию засчитываются как отработанная норма, остальные типы — нет; переопределяется полем `counts_as_worked`. Повторная загрузка той же записи (по `external_id`, а без него — по типу и датам) обновляет её, а не создаёт дубль. Ответ: `{ ok, processed, saved, failed, errors[] }`.
+
+Без этих данных отпуск и больничный попадают в табель как прогул, а сотруднику уходит напоминание «нет отметок».
+
+### `POST /timetrack/hr/calendar` — производственный календарь *(hr/system)*
+
+```json
+{ "calendar_code": "ru", "days": [
+  { "day": "2026-06-12", "day_type": "holiday",   "name": "День России" },
+  { "day": "2026-06-11", "day_type": "short_day", "shorten_minutes": 60 },
+  { "day": "2026-06-13", "day_type": "workday",   "name": "Рабочая суббота" }
+] }
+```
+
+`holiday` отменяет норму дня, `workday` делает день рабочим даже в выходной (перенос), `short_day` сокращает норму на `shorten_minutes`. Ответ: `{ ok, processed, updated, failed, errors[] }`.
 
 ---
 
@@ -89,7 +114,7 @@ JSON: `{ "employee_id": "EMP-001", "reason": "employee_request" }`. Удаляе
 
 ### `GET /timetrack/me/records?from=YYYY-MM-DD&to=YYYY-MM-DD` *(employee)*
 
-По умолчанию — последние 30 дней. Ответ — табель сотрудника: `employee`, `days[]` (дневная сводка), `sessions[]` (пары приход/уход с `in_event_id`/`out_event_id`), `corrections[]`, `totals`.
+По умолчанию — последние 30 дней. Ответ — табель сотрудника: `employee`, `days[]` (дневная сводка с типом дня и отсутствием), `sessions[]` (пары приход/уход с `in_event_id`/`out_event_id`), `corrections[]`, `absences[]`, `totals`.
 
 ### `POST /timetrack/me/corrections` *(employee)*
 

@@ -81,7 +81,7 @@ export function build() {
 		postgres('Load Monthly Timesheets', {
 			pos: [3, 0],
 			alwaysOutputData: true,
-			query: 'SELECT employee, days, sessions, corrections, totals FROM timetrack.fn_timesheet(NULL, $1::date, $2::date, NULL, true)',
+			query: 'SELECT employee, days, sessions, corrections, absences, totals FROM timetrack.fn_timesheet(NULL, $1::date, $2::date, NULL, true)',
 			params: '={{ [ $json.from, $json.to ] }}',
 		}),
 	);

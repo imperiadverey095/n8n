@@ -63,26 +63,26 @@ SELECT name, role, employee_id, left(token_hash, 20) || '…' AS token_hash FROM
 SELECT ok, code, event_type, pg_temp.msk(occurred_at) AS local_time, duplicate, full_name
   FROM timetrack.fn_clock('EMP-001', 'auto', 'face', 'kiosk-1', 'Проходная', 0.987, NULL,
                           'a1a1a1…(sha256 снимка)', 'req-0905', pg_temp.t('09:05'),
-                          '{"face_probability": 0.9993, "faces_detected": 1}', 'Kiosk main entrance');
+                          '{"face_probability": 0.9993, "faces_detected": 1}', 'Kiosk main entrance', 120, 16, true, 48);
 
 \echo
 \echo '=== Шаг 4. Сеть моргнула — терминал повторил тот же запрос (тот же request_id) ==='
 SELECT ok, code, event_type, pg_temp.msk(occurred_at) AS local_time, duplicate
   FROM timetrack.fn_clock('EMP-001', 'auto', 'face', 'kiosk-1', 'Проходная', 0.987, NULL,
-                          'a1a1a1…', 'req-0905', pg_temp.t('09:05'), '{}', 'Kiosk main entrance');
+                          'a1a1a1…', 'req-0905', pg_temp.t('09:05'), '{}', 'Kiosk main entrance', 120, 16, true, 48);
 
 \echo
 \echo '=== Шаг 5. 09:06 — Иванов ещё раз посмотрел в камеру (новый снимок): антидребезг 120 с ==='
 SELECT ok, code, event_type, pg_temp.msk(occurred_at) AS local_time, duplicate
   FROM timetrack.fn_clock('EMP-001', 'auto', 'face', 'kiosk-1', 'Проходная', 0.951, NULL,
-                          'b2b2b2…', 'req-0906', pg_temp.t('09:06'), '{}', 'Kiosk main entrance');
+                          'b2b2b2…', 'req-0906', pg_temp.t('09:06'), '{}', 'Kiosk main entrance', 120, 16, true, 48);
 
 \echo
 \echo '=== Шаг 6. Обед 13:02 → 13:47 и уход 18:34: тип события определяется чередованием (auto) ==='
 SELECT s.step, r.ok, r.code, r.event_type, pg_temp.msk(r.occurred_at) AS local_time
   FROM (VALUES (1, '13:02', 'req-1302'), (2, '13:47', 'req-1347'), (3, '18:34', 'req-1834')) AS s(step, at_time, req)
   CROSS JOIN LATERAL timetrack.fn_clock('EMP-001', 'auto', 'face', 'kiosk-1', 'Проходная', 0.97, NULL,
-                                        NULL, s.req, pg_temp.t(s.at_time), '{}', 'Kiosk main entrance') r
+                                        NULL, s.req, pg_temp.t(s.at_time), '{}', 'Kiosk main entrance', 120, 16, true, 48) r
   ORDER BY s.step;
 
 \echo
@@ -97,7 +97,7 @@ SELECT ok, code, event_type, full_name
 \echo '--- POST /timetrack/clock/manual с личным токеном (source = manual, согласие не требуется) ---'
 SELECT ok, code, event_type, pg_temp.msk(occurred_at) AS local_time
   FROM timetrack.fn_clock('EMP-003', 'check_in', 'manual', NULL, NULL, NULL, NULL, NULL, 'req-sid-2', pg_temp.t('08:03'),
-                          '{"via":"manual_api"}', 'EMP-003 mobile');
+                          '{"via":"manual_api"}', 'EMP-003 mobile', 120, 16, false, 48);
 \echo '    (вечером Сидоров забыл отметить уход — увидим это в отчёте)'
 
 \echo
@@ -106,17 +106,36 @@ SELECT id, employee_id, event_type, pg_temp.msk(occurred_at) AS local_time, sour
   FROM timetrack.attendance_events ORDER BY id;
 
 \echo
-\echo '=== Шаг 10. Дневная сводка (fn_daily_summary) — то, что показывает GET /timetrack/reports?type=standard ==='
-SELECT e.employee_id, d.status, pg_temp.msk(d.first_in) AS first_in, pg_temp.msk(d.last_out) AS last_out,
+\echo '=== Шаг 10. HR импортирует календарь и отпуск: POST /timetrack/hr/calendar и /hr/absences (воркфлоу 06) ==='
+\echo '--- Петрова в отпуске в демо-день: без этого день попал бы в табель как прогул ---'
+SELECT ok, code, absence ->> 'absence_type' AS type, absence ->> 'date_from' AS date_from, absence ->> 'date_to' AS date_to
+  FROM timetrack.fn_upsert_absence('EMP-002', 'vacation', :'demo_day'::date, (:'demo_day'::date + 4), 'approved', 'HR-VAC-7781', 'Ежегодный отпуск', NULL, 'hr.portal');
+\echo '--- производственный календарь: следующий день объявлен праздником, сотрудники переведены на него ---'
+SELECT calendar_code, day, day_type, name
+  FROM timetrack.fn_upsert_calendar_day((:'demo_day'::date + 1), 'holiday', 0, 'Демонстрационный праздник', 'ru', 'hr.portal');
+\set QUIET on
+DO $$
+DECLARE e record;
+BEGIN
+    FOR e IN SELECT employee_id, full_name FROM timetrack.employees LOOP
+        PERFORM timetrack.fn_upsert_employee(e.employee_id, e.full_name, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'hr.portal', 'ru');
+    END LOOP;
+END $$;
+\set QUIET off
+SELECT employee_id, full_name, calendar_code FROM timetrack.employees ORDER BY employee_id;
+
+\echo
+\echo '=== Шаг 11. Дневная сводка (fn_daily_summary) — то, что показывает GET /timetrack/reports?type=standard ==='
+SELECT e.employee_id, d.day_type, d.status, d.absence_type, pg_temp.msk(d.first_in) AS first_in, pg_temp.msk(d.last_out) AS last_out,
        d.sessions, d.worked_minutes, d.break_minutes, d.scheduled_minutes, d.late_minutes, d.overtime_minutes, d.incomplete
   FROM (VALUES ('EMP-001'), ('EMP-002'), ('EMP-003')) AS e(employee_id)
   CROSS JOIN LATERAL timetrack.fn_daily_summary(e.employee_id, :'demo_day'::date, :'demo_day'::date) d
   ORDER BY e.employee_id;
 \echo '    EMP-001: 09:05–13:02 и 13:47–18:34 = 524 мин; перерыв 45 < 60 → доудержано 15 → 509 отработано,'
-\echo '             опоздание 5 мин, сверхурочно 509 − 480 = 29.  EMP-002: не отмечалась → absent.  EMP-003: незакрытая смена.'
+\echo '             опоздание 5 мин, сверхурочно 509 − 480 = 29.  EMP-002: отпуск, а не прогул.  EMP-003: незакрытая смена.'
 
 \echo
-\echo '=== Шаг 11. Сидоров просит добавить пропущенный уход в 17:30: POST /timetrack/me/corrections (воркфлоу 04) ==='
+\echo '=== Шаг 12. Сидоров просит добавить пропущенный уход в 17:30: POST /timetrack/me/corrections (воркфлоу 04) ==='
 SELECT ok, code, request ->> 'id' AS request_id, request ->> 'status' AS status, request ->> 'reason' AS reason
   FROM timetrack.fn_request_correction('EMP-003', 'add', NULL, 'check_out', pg_temp.t('17:30'),
                                        'Забыл отметиться на выходе, ушёл в 17:30', 'EMP-003 mobile') \gset corr_
@@ -131,16 +150,16 @@ SELECT d.status, pg_temp.msk(d.first_in) AS first_in, pg_temp.msk(d.last_out) AS
   FROM timetrack.fn_daily_summary('EMP-003', :'demo_day'::date, :'demo_day'::date) d;
 
 \echo
-\echo '=== Шаг 12. Итоги дня для табеля (fn_timesheet → totals) ==='
+\echo '=== Шаг 13. Итоги дня для табеля (fn_timesheet → totals) ==='
 SELECT t.employee ->> 'employee_id' AS employee_id, t.employee ->> 'full_name' AS full_name, t.totals
   FROM timetrack.fn_timesheet(NULL, :'demo_day'::date, :'demo_day'::date) t;
 
 \echo
-\echo '=== Шаг 13. Outbox для HR-системы: что уйдёт воркфлоу 06 (POST на hrSystemUrl) ==='
+\echo '=== Шаг 14. Outbox для HR-системы: что уйдёт воркфлоу 06 (POST на hrSystemUrl) ==='
 SELECT id, event_kind, entity_id, status, payload - 'location' - 'device_id' AS payload
   FROM timetrack.hr_sync_outbox ORDER BY id LIMIT 6;
 
 \echo
-\echo '=== Шаг 14. Журнал аудита: кто и что делал ==='
+\echo '=== Шаг 15. Журнал аудита: кто и что делал ==='
 SELECT pg_temp.msk(occurred_at) AS "when", actor, actor_role, action, entity_type, entity_id
   FROM timetrack.audit_log ORDER BY id;

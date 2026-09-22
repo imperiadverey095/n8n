@@ -137,18 +137,32 @@ n8n Record Attendance     → timetrack.fn_clock(...)
   5 | EMP-003     | check_in   | 2026-09-21 08:03 | manual | ∅         |          ∅ | req-sid-2  | valid
 ```
 
-## 6. Дневная сводка и корректировка
+## 6. Календарь, отпуска и дневная сводка
+
+Перед расчётом табеля HR-система присылает кадровые данные — иначе отпуск превратится в прогул:
+
+```
+→ POST /webhook/timetrack/hr/absences   {"absences":[{"employee_id":"EMP-002","type":"vacation","date_from":"2026-09-21","date_to":"2026-09-25","external_id":"HR-VAC-7781"}]}
+ ok | code  |   type   | date_from  |  date_to
+ t  | saved | vacation | 2026-09-21 | 2026-09-25
+
+→ POST /webhook/timetrack/hr/calendar   {"calendar_code":"ru","days":[{"day":"2026-09-22","day_type":"holiday","name":"Демонстрационный праздник"}]}
+ calendar_code |    day     | day_type |           name
+ ru            | 2026-09-22 | holiday  | Демонстрационный праздник
+```
 
 `GET /webhook/timetrack/reports?type=standard&from=2026-09-21&to=2026-09-21` (HR-токен):
 
 ```
- employee_id |   status   |     first_in     |     last_out     | sessions | worked | break | scheduled | late | overtime | incomplete
- EMP-001     | late       | 2026-09-21 09:05 | 2026-09-21 18:34 |        2 |    509 |    60 |       480 |    5 |       29 | f
- EMP-002     | absent     | ∅                | ∅                |        0 |      0 |     0 |       480 |    0 |        0 | f
- EMP-003     | incomplete | 2026-09-21 08:03 | ∅                |        1 |      0 |     0 |       480 |    3 |        0 | t
+ employee_id | day_type |   status   | absence_type |     first_in     |     last_out     | sessions | worked | break | scheduled | late | overtime | incomplete
+ EMP-001     | workday  | late       | ∅            | 2026-09-21 09:05 | 2026-09-21 18:34 |        2 |    509 |    60 |       480 |    5 |       29 | f
+ EMP-002     | workday  | vacation   | vacation     | ∅                | ∅                |        0 |      0 |     0 |       480 |    0 |        0 | f
+ EMP-003     | workday  | incomplete | ∅            | 2026-09-21 08:03 | ∅                |        1 |      0 |     0 |       480 |    3 |        0 | t
 ```
 
 Как получились 509 минут у Иванова: 09:05–13:02 и 13:47–18:34 = 524 мин; обед длился 45 мин, а по графику положено 60 → недостающие 15 удержаны автоматически. Опоздание 5 мин, сверхурочно 509 − 480 = 29.
+
+Петрова в отпуске — день получает статус `vacation`, а не `absent`, и еженедельное напоминание ей не уйдёт. Следующий день объявлен праздником: норма 0, работа в такой день целиком считается сверхурочной, а короткий выход (меньше шести часов) обедом не облагается.
 
 Сидоров вечером забыл отметить уход — день `incomplete`. Утром он видит это в `GET /timetrack/me/records` (или получает письмо-напоминание в понедельник) и отправляет запрос:
 
@@ -173,6 +187,8 @@ HR видит его в очереди и одобряет:
 
 Новое событие имеет `source = correction`, история сохранена, Сидоров получает письмо о решении.
 
+Командировка и удалённая работа оформляются так же, но засчитываются по норме: день получает статус `business_trip`, отметок нет, а в колонке «Зачтено» стоит плановое время.
+
 ## 7. Табель и отчёт для HR
 
 Итоги дня (`fn_timesheet → totals`, то же самое отдаёт `type=summary`):
@@ -191,7 +207,7 @@ EMP-001;Иванов Иван Иванович;Склад;2026-09-21;да;опо
 EMP-001;Иванов Иван Иванович;Склад;2026-09-22;да;отсутствие;;;0;0:00;0;0:00;480;0;0;0
 ```
 
-`format=html` за неделю (тип `detailed`) — файл `examples/output/report.html`, скриншот `examples/output/report.png`: сводка по сотрудникам, затем по каждому — дни, сессии и корректировки. Тот же HTML уходит HR письмом 1-го числа каждого месяца вместе с CSV.
+`format=html` за неделю (тип `detailed`) — файл `examples/output/report.html`, скриншот `examples/output/report.png`: сводка по сотрудникам, затем по каждому — дни, сессии, отсутствия и корректировки. Тот же HTML уходит HR письмом 1-го числа каждого месяца вместе с CSV.
 
 ![Пример HTML-отчёта](../examples/output/report.png)
 

@@ -150,6 +150,8 @@ export function build() {
 				maxSessionHours: 16,
 				allowMultipleFaces: false,
 				requireConsent: true,
+				// сколько часов терминал может копить офлайн-очередь (captured_at старше — отбрасывается)
+				maxBackdateHours: 24,
 			},
 		}),
 	);
@@ -199,13 +201,14 @@ export function build() {
 			query:
 				'SELECT ok, code, event_id, event_type, occurred_at, duplicate, employee_id, full_name, timezone\n' +
 				"  FROM timetrack.fn_clock($1, $2, 'face', $3, $4, $5::numeric, $6::numeric, $7, $8,\n" +
-				'                          $9::timestamptz, $10::jsonb, $11, $12::int, $13::int, $14::boolean)',
+				'                          $9::timestamptz, $10::jsonb, $11, $12::int, $13::int, $14::boolean, $15::int)',
 			params:
 				'={{ [ $json.employee_id, $json.event_type, $json.device_id ?? null, $json.location ?? null, ' +
 				'$json.similarity ?? null, $json.liveness_score ?? null, $json.image_hash ?? null, $json.request_id ?? null, ' +
 				'$json.captured_at ?? null, ' +
 				'({ face_probability: $json.face_probability ?? null, faces_detected: $json.faces_detected ?? 0, client_ip: $json.client_ip ?? null }), ' +
-				`$json.client_name ?? null, ${CFG}.debounceSeconds, ${CFG}.maxSessionHours, ${CFG}.requireConsent ] }}`,
+				`$json.client_name ?? null, ${CFG}.debounceSeconds, ${CFG}.maxSessionHours, ${CFG}.requireConsent, ` +
+				`${CFG}.maxBackdateHours ] }}`,
 		}),
 	);
 	wf.add(

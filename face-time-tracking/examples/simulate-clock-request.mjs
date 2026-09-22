@@ -72,7 +72,8 @@ async function scenario(title, { requestBody, comprefaceResponse }) {
         FROM timetrack.fn_clock(${lit(r.employee_id)}, ${lit(r.event_type)}, 'face', ${lit(r.device_id)}, ${lit(r.location)},
              ${lit(r.similarity)}::numeric, ${lit(r.liveness_score)}::numeric, ${lit(r.image_hash)}, ${lit(r.request_id)},
              ${lit(r.captured_at)}::timestamptz, ${lit(meta)}::jsonb, ${lit(r.client_name)},
-             ${config.debounceSeconds}::int, ${config.maxSessionHours}::int, ${config.requireConsent}::boolean) x
+             ${config.debounceSeconds}::int, ${config.maxSessionHours}::int, ${config.requireConsent}::boolean,
+             ${config.maxBackdateHours ?? 24}::int) x
     ) x;
     ROLLBACK;`);
 	const res = JSON.parse(row.split('\n').find((l) => l.startsWith('{')));

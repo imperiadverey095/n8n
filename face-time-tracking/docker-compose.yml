@@ -28,6 +28,8 @@ services:
       # схема применяется один раз при инициализации тома
       - ./db/000_create_n8n_database.sql:/docker-entrypoint-initdb.d/000_create_n8n_database.sql:ro
       - ./db/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      # производственный календарь и отсутствия (отпуск, больничный, командировка)
+      - ./db/003_calendar_absences.sql:/docker-entrypoint-initdb.d/003_calendar_absences.sql:ro
       # демо-данные — только для стенда; закомментируйте для продакшена
       - ./db/002_seed_demo.sql:/docker-entrypoint-initdb.d/002_seed_demo.sql:ro
     healthcheck:

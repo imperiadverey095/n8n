@@ -785,7 +785,9 @@ LANGUAGE sql STABLE AS $$
                COALESCE((emp.ws -> 'days') @> to_jsonb(EXTRACT(ISODOW FROM days.work_date)::int), false) AS scheduled,
                (days.work_date::timestamp + COALESCE((emp.ws ->> 'start')::time, time '09:00')) AT TIME ZONE emp.timezone AS sched_start,
                (days.work_date::timestamp + COALESCE((emp.ws ->> 'end')::time,   time '18:00')) AT TIME ZONE emp.timezone AS sched_end,
-               COALESCE((emp.ws ->> 'break_minutes')::int, 0) AS std_break
+               COALESCE((emp.ws ->> 'break_minutes')::int, 0) AS std_break,
+               -- обед удерживается только со смены длиннее порога (по умолчанию 6 ч)
+               COALESCE((emp.ws ->> 'break_after_minutes')::int, 360) AS break_after
           FROM days CROSS JOIN emp
     ),
     s AS (
@@ -804,6 +806,7 @@ LANGUAGE sql STABLE AS $$
     ),
     calc AS (
         SELECT sched.work_date, sched.scheduled, sched.sched_start, sched.sched_end, sched.std_break,
+               sched.break_after,
                agg.first_in, agg.last_out, COALESCE(agg.sessions, 0) AS sessions,
                COALESCE(agg.incomplete, false) AS incomplete,
                CASE WHEN sched.scheduled
@@ -815,11 +818,17 @@ LANGUAGE sql STABLE AS $$
           FROM sched LEFT JOIN agg ON agg.work_date = sched.work_date
     ),
     calc2 AS (
-        -- авто-удержание обеда не больше фактически отработанного времени
+        -- Сотрудник не отмечал обед: удерживаем недостающую часть, но только если
+        -- смена длиннее порога break_after (короткий выход обедом не облагается)
+        -- и не больше фактически отработанного времени.
         SELECT calc.*,
-               LEAST(GREATEST(calc.std_break - calc.gap_minutes, 0), calc.worked_raw) AS auto_break,
-               GREATEST(calc.worked_raw - LEAST(GREATEST(calc.std_break - calc.gap_minutes, 0), calc.worked_raw), 0) AS worked_minutes
+               CASE WHEN calc.worked_raw >= calc.break_after
+                    THEN LEAST(GREATEST(calc.std_break - calc.gap_minutes, 0), calc.worked_raw)
+                    ELSE 0 END AS auto_break
           FROM calc
+    ),
+    calc3 AS (
+        SELECT calc2.*, GREATEST(calc2.worked_raw - calc2.auto_break, 0) AS worked_minutes FROM calc2
     )
     SELECT p_employee_id AS employee_id,
            c.work_date,
@@ -844,7 +853,7 @@ LANGUAGE sql STABLE AS $$
                WHEN c.scheduled AND c.first_in > c.sched_start + interval '1 minute' THEN 'late'
                ELSE 'present'
            END AS status
-      FROM calc2 c
+      FROM calc3 c
      ORDER BY c.work_date
 $$;
 

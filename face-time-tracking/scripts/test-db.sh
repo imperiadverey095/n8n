@@ -25,6 +25,7 @@ else
 fi
 
 psql "$TEST_URL" -v ON_ERROR_STOP=1 -q -f db/001_schema.sql
+psql "$TEST_URL" -v ON_ERROR_STOP=1 -q -f db/003_calendar_absences.sql
 # самотест рассчитан на пустую схему и откатывает свои данные
 psql "$TEST_URL" -v ON_ERROR_STOP=1 -f db/900_selftest.sql 2>&1 | grep -E "NOTICE|SELFTEST|ERROR"
 # демо-данные должны применяться без ошибок (вывод токенов подавлен)

@@ -40,6 +40,7 @@ flowchart LR
 | `attendance.updated` | событие помечено `corrected`/`voided` | событие с `status`, `superseded_by` |
 | `employee.upserted` | изменение карточки сотрудника | `employee_id`, `status`, `hr_external_id` |
 | `consent.revoked` | отзыв согласия/удаление биометрии | `employee_id`, `reason` |
+| `absence.upserted` | создано, изменено или отменено отсутствие | запись `absences` целиком |
 
 Семантика доставки — «хотя бы один раз»: приёмник должен быть идемпотентным по `id` (или по `entity_id` + `kind`). Ответ `2xx` — успех; иначе повтор с паузой 2, 4, 8 … минут (макс. 6 ч), после 10 попыток запись получает статус `dead` и требует внимания (`SELECT * FROM timetrack.hr_sync_outbox WHERE status = 'dead'`).
 
@@ -56,6 +57,17 @@ flowchart LR
 `POST /webhook/timetrack/hr/employees`, токен роли `system` или `hr` (см. [api.md](api.md)). Записи проходят через `fn_upsert_employee` — новые создаются, существующие обновляются (пустые поля не затирают текущие значения). Увольнение (`status: terminated`) фиксирует `terminated_at`; биометрия удаляется воркфлоу 07 через `daysAfterTermination` дней.
 
 Идентификатор сотрудника `employee_id` — общий ключ систем; если в HR-системе другой формат, сохраняйте её ключ в `hr_external_id`.
+
+### Отсутствия и производственный календарь
+
+Кадровые приказы (отпуск, больничный, командировка) и производственный календарь приходят теми же двумя вебхуками:
+
+* `POST /webhook/timetrack/hr/absences` — `{ "absences": [ { employee_id, type, date_from, date_to, status, external_id, comment } ] }`
+* `POST /webhook/timetrack/hr/calendar` — `{ "calendar_code": "ru", "days": [ { day, day_type, shorten_minutes, name } ] }`
+
+Формат и семантика полей — в [api.md](api.md). Обе операции идемпотентны, поэтому HR-система может слать полный срез хоть каждую ночь. Практика внедрения: отсутствия синхронизировать ежедневно (ночью и после утверждения приказа), календарь — раз в год при публикации и после каждого изменения переносов.
+
+Если кадровый учёт ведётся в той же системе, что и табель, отсутствия можно заводить напрямую: `SELECT * FROM timetrack.fn_upsert_absence('EMP-002', 'vacation', '2026-09-21', '2026-09-25');`
 
 ## Импорт исторических данных
 

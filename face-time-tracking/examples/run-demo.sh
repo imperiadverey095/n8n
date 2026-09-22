@@ -13,6 +13,7 @@ DB="timetrack_demo"
 psql "$ADMIN_URL" -X -q -c "DROP DATABASE IF EXISTS ${DB}" -c "CREATE DATABASE ${DB}"
 DEMO_URL="${ADMIN_URL%/*}/${DB}"
 psql "$DEMO_URL" -X -q -v ON_ERROR_STOP=1 -f db/001_schema.sql
+psql "$DEMO_URL" -X -q -v ON_ERROR_STOP=1 -f db/003_calendar_absences.sql
 psql "$DEMO_URL" -X -f examples/demo-day.sql | tee "$OUT/demo-day.txt"
 DATABASE_URL="$DEMO_URL" node examples/render-report.mjs
 DATABASE_URL="$DEMO_URL" node examples/simulate-clock-request.mjs | tee "$OUT/simulated-http.txt"

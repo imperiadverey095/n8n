@@ -165,17 +165,17 @@ BEGIN
     ASSERT d.status = 'absent', 'чт: прогул, получено ' || d.status;
     ASSERT d.break_minutes = 0 AND d.worked_minutes = 0, 'чт: без отметок нет ни работы, ни перерывов';
 
-    -- короткая сессия (20 мин) в пятницу: удержание обеда не может превышать отработанное
+    -- короткий выход (20 мин) в пятницу: смена короче порога break_after — обед не удерживается
     INSERT INTO timetrack.attendance_events (employee_id, event_type, occurred_at, source) VALUES
       ('EMP-003', 'check_in',  '2026-06-05 09:00+02', 'face'),
       ('EMP-003', 'check_out', '2026-06-05 09:20+02', 'face');
     SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-003', '2026-06-01', '2026-06-07') WHERE work_date = '2026-06-05';
-    ASSERT d.worked_minutes = 0 AND d.break_minutes = 20 AND d.status = 'present', 'пт: 20 мин работы целиком уходят в обед, получено ' || d.worked_minutes || '/' || d.break_minutes || '/' || d.status;
+    ASSERT d.worked_minutes = 20 AND d.break_minutes = 0 AND d.status = 'present', 'пт: короткий выход без удержания обеда, получено ' || d.worked_minutes || '/' || d.break_minutes || '/' || d.status;
     SELECT count(*) INTO n FROM timetrack.fn_sessions('EMP-003', '2026-06-01', '2026-06-07');
     ASSERT n = 7, 'после пятницы ожидалось 7 сессий, получено ' || n;
 
     SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-003', '2026-06-01', '2026-06-07') WHERE work_date = '2026-06-06';
-    ASSERT NOT d.scheduled AND d.worked_minutes = 180 AND d.overtime_minutes = 180, 'сб: 240 мин минус авто-обед 60 = 180 сверхурочно, получено ' || d.worked_minutes;
+    ASSERT NOT d.scheduled AND d.worked_minutes = 240 AND d.overtime_minutes = 240, 'сб: 240 мин работы в выходной целиком сверхурочные, получено ' || d.worked_minutes;
 
     SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-003', '2026-06-01', '2026-06-07') WHERE work_date = '2026-06-07';
     ASSERT d.sessions = 1 AND d.worked_minutes = 420 AND d.status = 'present', 'вс: ночная смена 480-60 = 420, получено ' || d.worked_minutes || ' ' || d.status;
@@ -184,7 +184,7 @@ BEGIN
     ASSERT (t.totals ->> 'scheduled_days')::int = 5, 'табель: 5 плановых дней';
     ASSERT (t.totals ->> 'days_absent')::int = 1, 'табель: 1 прогул, получено ' || (t.totals ->> 'days_absent');
     ASSERT (t.totals ->> 'days_incomplete')::int = 1;
-    ASSERT (t.totals ->> 'worked_minutes')::int = 495 + 480 + 0 + 180 + 420, 'табель: сумма минут, получено ' || (t.totals ->> 'worked_minutes');
+    ASSERT (t.totals ->> 'worked_minutes')::int = 495 + 480 + 0 + 20 + 240 + 420, 'табель: сумма минут, получено ' || (t.totals ->> 'worked_minutes');
     ASSERT jsonb_array_length(t.days) = 7 AND jsonb_array_length(t.sessions) = 7;
     ASSERT t.employee ->> 'full_name' = 'Schmidt Anna';
 
@@ -311,6 +311,137 @@ BEGIN
     ASSERT timetrack.fn_purge_audit_log(3650) = 0;
     ASSERT timetrack.fn_purge_outbox(30) = 0;
     RAISE NOTICE 'OK 7: отзыв биометрии и retention';
+END $$;
+
+-- ---------- 8. Производственный календарь и отсутствия (db/003_calendar_absences.sql) ----------
+DO $$
+DECLARE
+    d   record;
+    t   record;
+    r   record;
+    n   int;
+    v_id uuid;
+BEGIN
+    -- Модуль необязателен: если он не применён, группа пропускается
+    IF to_regclass('timetrack.absences') IS NULL THEN
+        RAISE NOTICE 'SKIP 8: модуль календаря и отсутствий не применён (db/003_calendar_absences.sql)';
+        RETURN;
+    END IF;
+
+    PERFORM timetrack.fn_upsert_employee('EMP-004', 'Календарь Тест', 'cal@example.com', 'Офис', NULL, 'Europe/Moscow',
+        '{"start":"09:00","end":"18:00","days":[1,2,3,4,5],"break_minutes":60}', NULL, NULL, 'selftest', 'ru');
+    ASSERT (SELECT calendar_code FROM timetrack.employees WHERE employee_id = 'EMP-004') = 'ru', 'код календаря сотрудника';
+
+    -- 2026-06-11 чт предпраздничный (-60), 12 пт праздник, 13 сб рабочая
+    PERFORM timetrack.fn_upsert_calendar_day('2026-06-11', 'short_day', 60, 'Предпраздничный', 'ru', 'selftest');
+    PERFORM timetrack.fn_upsert_calendar_day('2026-06-12', 'holiday',   0,  'День России',     'ru', 'selftest');
+    PERFORM timetrack.fn_upsert_calendar_day('2026-06-13', 'workday',   0,  'Рабочая суббота', 'ru', 'selftest');
+    -- повторный вызов обновляет, а не дублирует
+    PERFORM timetrack.fn_upsert_calendar_day('2026-06-12', 'holiday', 0, NULL, 'ru', 'selftest');
+    ASSERT (SELECT count(*) FROM timetrack.calendar_days WHERE calendar_code = 'ru') = 3, 'календарь: 3 записи';
+    ASSERT (SELECT name FROM timetrack.calendar_days WHERE calendar_code = 'ru' AND day = '2026-06-12') = 'День России',
+           'повторный upsert не должен затирать название';
+
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-08', '2026-06-14') WHERE work_date = '2026-06-11';
+    ASSERT d.day_type = 'short_day' AND d.scheduled AND d.scheduled_minutes = 420,
+           'предпраздничный: норма 420, получено ' || d.scheduled_minutes || ' (' || d.day_type || ')';
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-08', '2026-06-14') WHERE work_date = '2026-06-12';
+    ASSERT d.day_type = 'holiday' AND NOT d.scheduled AND d.status = 'holiday',
+           'праздник: нерабочий день, получено ' || d.day_type || '/' || d.status;
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-08', '2026-06-14') WHERE work_date = '2026-06-13';
+    ASSERT d.scheduled AND d.day_type = 'workday' AND d.status = 'absent',
+           'перенос: рабочая суббота, получено ' || d.day_type || '/' || d.status;
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-08', '2026-06-14') WHERE work_date = '2026-06-14';
+    ASSERT d.day_type = 'weekend' AND d.status = 'day_off', 'вс: обычный выходной';
+
+    -- работа в праздник: норма 0, всё время сверхурочное, обед не удерживается (смена < 6 ч)
+    INSERT INTO timetrack.attendance_events (employee_id, event_type, occurred_at, source) VALUES
+      ('EMP-004', 'check_in',  '2026-06-12 10:00+03', 'face'),
+      ('EMP-004', 'check_out', '2026-06-12 13:00+03', 'face');
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-08', '2026-06-14') WHERE work_date = '2026-06-12';
+    ASSERT d.worked_minutes = 180 AND d.overtime_minutes = 180 AND d.break_minutes = 0 AND d.status = 'present',
+           'работа в праздник: 180 сверхурочных, получено ' || d.worked_minutes || '/' || d.overtime_minutes || '/' || d.break_minutes;
+
+    -- отсутствия
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'vacation', '2026-06-01', '2026-06-03', 'approved', NULL, 'Ежегодный отпуск', NULL, 'hr.portal');
+    ASSERT r.ok AND r.code = 'saved', 'отпуск: ' || r.code;
+    ASSERT (r.absence ->> 'counts_as_worked')::boolean = false, 'отпуск не засчитывается как отработанное время';
+    v_id := (r.absence ->> 'id')::uuid;
+    -- повтор без external_id не создаёт дубль
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'vacation', '2026-06-01', '2026-06-03');
+    ASSERT r.ok AND (r.absence ->> 'id')::uuid = v_id, 'повторная синхронизация не должна дублировать отсутствие';
+    -- больничный важнее отпуска в тот же день
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'sick_leave', '2026-06-03', '2026-06-03', 'approved', 'HR-SICK-1');
+    ASSERT r.ok;
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'business_trip', '2026-06-08', '2026-06-09', 'approved', 'HR-TRIP-1', 'Конференция');
+    ASSERT r.ok AND (r.absence ->> 'counts_as_worked')::boolean = true, 'командировка засчитывается по норме';
+
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-01', '2026-06-03') WHERE work_date = '2026-06-01';
+    ASSERT d.status = 'vacation' AND d.absence_type = 'vacation' AND d.scheduled,
+           'отпуск не должен быть прогулом, получено ' || d.status;
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-01', '2026-06-03') WHERE work_date = '2026-06-03';
+    ASSERT d.status = 'sick_leave', 'больничный приоритетнее отпуска, получено ' || d.status;
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-08', '2026-06-09') WHERE work_date = '2026-06-08';
+    ASSERT d.status = 'business_trip' AND d.credited_minutes = 480 AND d.worked_minutes = 0,
+           'командировка: зачтена норма 480, получено ' || d.credited_minutes;
+
+    -- отсутствия исключены из напоминаний, реальные прогулы остались
+    SELECT count(*) INTO n FROM timetrack.fn_attendance_issues('2026-06-01', '2026-06-03') i WHERE i.employee_id = 'EMP-004';
+    ASSERT n = 0, 'дни отпуска и больничного не должны попадать в напоминания';
+    SELECT count(*) INTO n FROM timetrack.fn_attendance_issues('2026-06-04', '2026-06-05') i WHERE i.employee_id = 'EMP-004';
+    ASSERT n = 1, 'реальный прогул должен попадать в напоминания';
+
+    -- итоги табеля и раздел absences
+    SELECT * INTO t FROM timetrack.fn_timesheet('EMP-004', '2026-06-01', '2026-06-14');
+    ASSERT (t.totals ->> 'days_vacation')::int = 2, 'табель: 2 дня отпуска, получено ' || (t.totals ->> 'days_vacation');
+    ASSERT (t.totals ->> 'days_sick_leave')::int = 1;
+    ASSERT (t.totals ->> 'days_business_trip')::int = 2;
+    ASSERT (t.totals ->> 'days_holiday')::int = 1, 'табель: 1 праздник';
+    ASSERT (t.totals ->> 'credited_minutes')::int = 960, 'табель: зачтено 960 мин командировки, получено ' || (t.totals ->> 'credited_minutes');
+    -- норма периода: 10 рабочих дней (вкл. перенос), из них один предпраздничный (-60)
+    ASSERT (t.totals ->> 'scheduled_minutes')::int = 10 * 480 - 60, 'табель: норма периода, получено ' || (t.totals ->> 'scheduled_minutes');
+    ASSERT jsonb_array_length(t.absences) = 3, 'табель: 3 отсутствия в разделе absences';
+
+    -- отмена отсутствия возвращает день в обычный режим
+    SELECT * INTO r FROM timetrack.fn_cancel_absence(v_id, 'hr.portal');
+    ASSERT r.ok AND r.code = 'cancelled';
+    SELECT * INTO d FROM timetrack.fn_daily_summary('EMP-004', '2026-06-01', '2026-06-01');
+    ASSERT d.status = 'absent' AND d.absence_type IS NULL, 'после отмены отпуска день снова прогул, получено ' || d.status;
+    SELECT * INTO r FROM timetrack.fn_cancel_absence(v_id, 'hr.portal');
+    ASSERT r.ok = false AND r.code = 'absence_not_found', 'повторная отмена невозможна';
+
+    -- проверки входных данных
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'holiday_trip', '2026-06-01', '2026-06-02');
+    ASSERT r.ok = false AND r.code = 'invalid_absence_type';
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'vacation', '2026-06-05', '2026-06-01');
+    ASSERT r.ok = false AND r.code = 'invalid_period';
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-404', 'vacation', '2026-06-01', '2026-06-02');
+    ASSERT r.ok = false AND r.code = 'employee_not_found';
+
+    ASSERT (SELECT count(*) FROM timetrack.hr_sync_outbox WHERE event_kind = 'absence.upserted') >= 4,
+           'отсутствия должны уходить в HR-систему через outbox';
+
+    -- настраиваемое окно приёма отметок «задним числом» (офлайн-очередь терминала)
+    PERFORM timetrack.fn_grant_consent('EMP-004', 'v1.0', 'written_form', NULL, 'selftest');
+    SELECT * INTO r FROM timetrack.fn_clock('EMP-004', 'check_in', 'face', 'kiosk-1', NULL, 0.99, NULL, NULL,
+                                            'req-backdate-1', now() - interval '30 hours');
+    ASSERT r.ok AND r.occurred_at > now() - interval '1 minute',
+           'по умолчанию отметка старше 24 часов должна записываться текущим временем';
+    ASSERT (SELECT metadata ? 'captured_at_rejected' FROM timetrack.attendance_events WHERE id = r.event_id);
+    SELECT * INTO r FROM timetrack.fn_clock('EMP-004', 'check_out', 'face', 'kiosk-1', NULL, 0.99, NULL, NULL,
+                                            'req-backdate-2', now() - interval '30 hours', '{}', 'kiosk', 120, 16, true, 48);
+    ASSERT r.ok AND r.occurred_at < now() - interval '29 hours',
+           'при окне 48 часов отметка 30-часовой давности принимается как есть';
+
+    -- отметка в день оформленного отсутствия помечается для разбора
+    SELECT * INTO r FROM timetrack.fn_upsert_absence('EMP-004', 'vacation', CURRENT_DATE, CURRENT_DATE, 'approved', 'HR-VAC-NOW');
+    ASSERT r.ok;
+    -- антидребезг здесь отключён (0 с): предыдущая отметка этого теста была записана текущим временем
+    SELECT * INTO r FROM timetrack.fn_clock('EMP-004', 'check_in', 'face', 'kiosk-1', NULL, 0.99, NULL, NULL,
+                                            'req-during-vac', NULL, '{}', 'kiosk', 0);
+    ASSERT r.ok AND (SELECT metadata ->> 'during_absence' FROM timetrack.attendance_events WHERE id = r.event_id) = 'vacation',
+           'отметка во время отпуска должна помечаться в метаданных';
+    RAISE NOTICE 'OK 8: производственный календарь и отсутствия';
 END $$;
 
 SELECT 'SELFTEST PASSED' AS result;

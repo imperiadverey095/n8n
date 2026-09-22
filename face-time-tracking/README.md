@@ -35,6 +35,7 @@ flowchart LR
 | `scripts/workflows/*.mjs`, `scripts/lib/builder.mjs` | исходники воркфлоу: JSON собирается кодом (`node scripts/build-workflows.mjs`) |
 | `scripts/validate-workflows.mjs` | проверка JSON: связи, типы и версии нод по исходникам n8n, параметры SQL |
 | `db/001_schema.sql` | схема `timetrack`: таблицы, функции бизнес-логики, отчётные функции, outbox, retention |
+| `db/003_calendar_absences.sql` | производственный календарь (праздники, переносы, предпраздничные дни) и отсутствия (отпуск, больничный, командировка) — применяется следом за схемой |
 | `db/900_selftest.sql`, `scripts/test-db.sh` | самотест схемы (7 групп сценариев, откатывается) |
 | `db/002_seed_demo.sql` | демо-сотрудники, токены и история для стенда |
 | `docker-compose.yml`, `.env.example` | стенд: n8n + PostgreSQL + CompreFace |
@@ -56,7 +57,7 @@ flowchart LR
 | 03 | Attendance Reports | `GET /timetrack/reports` | standard / detailed / summary в json, csv, html; HR — все, сотрудник — только себя |
 | 04 | Employee Self-Service | `GET /timetrack/me/records`, `POST /timetrack/me/corrections`, `GET /timetrack/hr/corrections`, `POST /timetrack/hr/corrections/review` | просмотр и корректировка своих записей, рассмотрение HR с уведомлениями |
 | 05 | Scheduled Reports & Reminders | cron 1-го числа и по понедельникам | месячный табель HR (HTML + CSV), напоминания сотрудникам о проблемных днях |
-| 06 | HR System Sync | cron каждые 15 мин, `POST /timetrack/hr/employees` | доставка событий в HR-систему через outbox, приём справочника сотрудников |
+| 06 | HR System Sync | cron каждые 15 мин, `POST /timetrack/hr/employees`, `/hr/absences`, `/hr/calendar` | доставка событий в HR-систему через outbox, приём справочника сотрудников, отпусков и производственного календаря |
 | 07 | Data Retention | cron ежедневно | удаление биометрии уволенных/отозвавших согласие, очистка журналов |
 
 ## Быстрый старт (стенд)
@@ -77,7 +78,7 @@ docker compose logs postgres | grep -A6 token_kind   # демо-токены п�
 3. **Импорт воркфлоу**: `scripts/import-workflows.sh compose` (или через UI *Import from file*). В настройках каждого воркфлоу назначьте *Error Workflow* → «Timetrack 00 — Error Handler», проверьте ноды *Config* (адрес CompreFace, пороги, e-mail) и активируйте.
 4. **Проверка**: `HR_TOKEN=… DEVICE_TOKEN=… EMPLOYEE_TOKEN=… ENROLL_PHOTO=a.jpg CLOCK_PHOTO=b.jpg scripts/smoke-test.sh` — регистрация, отметка, антидребезг, ручная отметка, корректировка, отчёты.
 
-Для существующего n8n: примените `db/001_schema.sql` к своей PostgreSQL, поднимите CompreFace (официальный `docker-compose` проекта) и импортируйте `workflows/*.json`.
+Для существующего n8n: примените `db/001_schema.sql` и `db/003_calendar_absences.sql` к своей PostgreSQL, поднимите CompreFace (официальный `docker-compose` проекта) и импортируйте `workflows/*.json`.
 
 ## Как это работает
 
@@ -85,14 +86,14 @@ docker compose logs postgres | grep -A6 token_kind   # демо-токены п�
 
 **Хранение.** Фото не сохраняются нигде — ни в БД, ни в n8n (при multipart), ни в CompreFace (`SAVE_IMAGES_TO_DB=false`). В событии остаются схожесть и sha256 снимка. Согласия версионируются, отзыв удаляет шаблон и блокирует распознавание; ручная отметка остаётся.
 
-**Отчёты.** Вся математика в SQL (`fn_sessions` → `fn_daily_summary` → `fn_timesheet`): смены через полночь, автоудержание обеда, опоздания, ранние уходы, сверхурочные, прогулы и незакрытые смены (см. `docs/reports.md`). Форматирование — общий JS-модуль, поэтому веб-отчёт и рассылка совпадают.
+**Отчёты.** Вся математика в SQL (`fn_sessions` → `fn_daily_summary` → `fn_timesheet`): смены через полночь, автоудержание обеда, опоздания, ранние уходы, сверхурочные, прогулы и незакрытые смены. Праздники, переносы и предпраздничные дни берутся из производственного календаря, а отпуск, больничный и командировка — из таблицы отсутствий, поэтому они не превращаются в прогулы (см. `docs/reports.md`). Форматирование — общий JS-модуль, поэтому веб-отчёт и рассылка совпадают.
 
 **Корректировки.** Сотрудник запрашивает `add`/`change`/`void` с причиной; HR одобряет или отклоняет; при одобрении создаётся новое событие `source = correction`, старое помечается `corrected`/`voided` — история не теряется; обе стороны получают письма.
 
 ## Настройка
 
 * **Пороги и адреса** — ноды *Config* в каждом воркфлоу (`faceApiUrl`, `similarityThreshold`, `detProbThreshold`, `debounceSeconds`, `maxSessionHours`, e-mail адреса, `hrSystemUrl`, сроки хранения).
-* **Графики работы** — `work_schedule` сотрудника: `{"start":"09:00","end":"18:00","days":[1,2,3,4,5],"break_minutes":60}`; часовой пояс — IANA.
+* **Графики работы** — `work_schedule` сотрудника: `{"start":"09:00","end":"18:00","days":[1,2,3,4,5],"break_minutes":60,"break_after_minutes":360}`; часовой пояс — IANA. Праздники и переносы — в производственном календаре (`calendar_code` сотрудника), отпуска и больничные — в отсутствиях.
 * **Токены** — `SELECT timetrack.fn_issue_token('Kiosk 2', 'device', NULL, 'Цех 2');` (роли: `device`, `employee`, `hr`, `system`; можно задать `expires_at`). Отзыв: `UPDATE timetrack.api_clients SET active = false WHERE name = '…'`.
 * **Другой провайдер распознавания** (AWS Rekognition, Azure Face, Luxand и т. п.) — замените ноды *Recognize Face* / *Register Face* / *Delete Face Templates* и адаптируйте разбор ответа в *Interpret Recognition*; остальная система от провайдера не зависит.
 

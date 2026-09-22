@@ -65,7 +65,16 @@ const fmtDateTime = (iso, tz) => {
     return new Intl.DateTimeFormat('ru-RU', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   } catch (e) { return String(iso); }
 };
-const STATUS_RU = { present: 'присутствовал', late: 'опоздание', incomplete: 'не закрыта смена', absent: 'отсутствие', day_off: 'выходной' };
+const STATUS_RU = {
+  present: 'присутствовал', late: 'опоздание', incomplete: 'не закрыта смена', absent: 'отсутствие',
+  day_off: 'выходной', holiday: 'праздник', vacation: 'отпуск', sick_leave: 'больничный',
+  business_trip: 'командировка', remote: 'удалённо', unpaid_leave: 'отпуск без сохранения', other: 'отсутствие (прочее)',
+};
+const DAY_TYPE_RU = { workday: 'рабочий', weekend: 'выходной', holiday: 'праздник', short_day: 'предпраздничный' };
+const ABSENCE_RU = {
+  vacation: 'отпуск', sick_leave: 'больничный', business_trip: 'командировка',
+  remote: 'удалённо', unpaid_leave: 'отпуск без сохранения', other: 'прочее',
+};
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
 function dayRows(ts) {
@@ -75,13 +84,17 @@ function dayRows(ts) {
     full_name: ts.employee.full_name,
     department: ts.employee.department ?? '',
     date: d.work_date,
+    day_type: DAY_TYPE_RU[d.day_type] || d.day_type || '',
     scheduled: d.scheduled ? 'да' : 'нет',
     status: STATUS_RU[d.status] || d.status,
+    absence: d.absence_type ? (ABSENCE_RU[d.absence_type] || d.absence_type) : '',
     first_in: fmtTime(d.first_in, tz),
     last_out: fmtTime(d.last_out, tz),
     sessions: d.sessions,
     worked: fmtMin(d.worked_minutes),
     worked_minutes: d.worked_minutes,
+    credited: fmtMin(d.credited_minutes || 0),
+    credited_minutes: d.credited_minutes || 0,
     breaks: fmtMin(d.break_minutes),
     scheduled_minutes: d.scheduled_minutes,
     late_minutes: d.late_minutes,
@@ -102,6 +115,13 @@ function summaryRow(ts) {
     days_absent: t.days_absent ?? 0,
     days_incomplete: t.days_incomplete ?? 0,
     late_days: t.late_days ?? 0,
+    days_vacation: t.days_vacation ?? 0,
+    days_sick_leave: t.days_sick_leave ?? 0,
+    days_business_trip: t.days_business_trip ?? 0,
+    days_other_absence: t.days_other_absence ?? 0,
+    days_holiday: t.days_holiday ?? 0,
+    credited_hours: fmtMin(t.credited_minutes),
+    credited_minutes: t.credited_minutes ?? 0,
     scheduled_hours: fmtMin(t.scheduled_minutes),
     worked_hours: fmtMin(t.worked_minutes),
     worked_minutes: t.worked_minutes ?? 0,
@@ -148,6 +168,20 @@ function correctionRows(ts) {
   }));
 }
 
+function absenceRows(ts) {
+  return (ts.absences || []).map((a) => ({
+    employee_id: ts.employee.employee_id,
+    full_name: ts.employee.full_name,
+    absence_type: ABSENCE_RU[a.absence_type] || a.absence_type,
+    date_from: a.date_from,
+    date_to: a.date_to,
+    status: a.status,
+    counts_as_worked: a.counts_as_worked ? 'да' : 'нет',
+    comment: a.comment ?? '',
+    external_id: a.external_id ?? '',
+  }));
+}
+
 function htmlTable(rows, columns) {
   if (!rows.length) return '<p><i>Нет данных</i></p>';
   const head = columns.map((c) => '<th>' + esc(c.title) + '</th>').join('');
@@ -156,16 +190,24 @@ function htmlTable(rows, columns) {
 }
 
 const DAY_COLUMNS = [
-  { key: 'date', title: 'Дата' }, { key: 'status', title: 'Статус' }, { key: 'first_in', title: 'Приход' },
-  { key: 'last_out', title: 'Уход' }, { key: 'worked', title: 'Отработано' }, { key: 'breaks', title: 'Перерывы' },
+  { key: 'date', title: 'Дата' }, { key: 'day_type', title: 'Тип дня' }, { key: 'status', title: 'Статус' },
+  { key: 'first_in', title: 'Приход' }, { key: 'last_out', title: 'Уход' }, { key: 'worked', title: 'Отработано' },
+  { key: 'credited', title: 'Зачтено' }, { key: 'breaks', title: 'Перерывы' },
   { key: 'late_minutes', title: 'Опоздание, мин' }, { key: 'early_leave_minutes', title: 'Ранний уход, мин' },
   { key: 'overtime_minutes', title: 'Сверхурочно, мин' },
 ];
 const SUMMARY_COLUMNS = [
   { key: 'employee_id', title: 'Табельный №' }, { key: 'full_name', title: 'Сотрудник' }, { key: 'department', title: 'Подразделение' },
   { key: 'scheduled_days', title: 'Плановых дней' }, { key: 'days_present', title: 'Отработано дней' },
-  { key: 'days_absent', title: 'Отсутствий' }, { key: 'days_incomplete', title: 'Незакрытых смен' }, { key: 'late_days', title: 'Опозданий' },
-  { key: 'scheduled_hours', title: 'План, ч' }, { key: 'worked_hours', title: 'Факт, ч' }, { key: 'overtime_hours', title: 'Сверхурочно, ч' },
+  { key: 'days_absent', title: 'Прогулов' }, { key: 'days_incomplete', title: 'Незакрытых смен' }, { key: 'late_days', title: 'Опозданий' },
+  { key: 'days_vacation', title: 'Отпуск' }, { key: 'days_sick_leave', title: 'Больничный' }, { key: 'days_business_trip', title: 'Командировки' },
+  { key: 'scheduled_hours', title: 'План, ч' }, { key: 'worked_hours', title: 'Факт, ч' },
+  { key: 'credited_hours', title: 'Зачтено, ч' }, { key: 'overtime_hours', title: 'Сверхурочно, ч' },
+];
+const ABSENCE_COLUMNS = [
+  { key: 'absence_type', title: 'Тип' }, { key: 'date_from', title: 'С' }, { key: 'date_to', title: 'По' },
+  { key: 'status', title: 'Статус' }, { key: 'counts_as_worked', title: 'Зачитывается как работа' },
+  { key: 'comment', title: 'Комментарий' },
 ];
 const SESSION_COLUMNS = [
   { key: 'date', title: 'Дата' }, { key: 'check_in', title: 'Приход' }, { key: 'check_out', title: 'Уход' },
@@ -215,6 +257,7 @@ if (p.format === 'csv') {
   else if (p.type === 'standard') rows = timesheets.flatMap(dayRows);
   else rows = timesheets.flatMap((ts) => dayRows(ts).map((r) => ({ section: 'day', ...r }))
       .concat(sessionRows(ts).map((r) => ({ section: 'session', ...r })))
+      .concat(absenceRows(ts).map((r) => ({ section: 'absence', ...r })))
       .concat(correctionRows(ts).map((r) => ({ section: 'correction', ...r }))));
   if (!rows.length) rows = [{ info: 'Нет данных за период ' + period }];
   return rows.map((r) => ({ json: r }));
@@ -232,6 +275,7 @@ if (p.type !== 'summary') {
     sections.push('<h3>По дням</h3>' + htmlTable(dayRows(ts), DAY_COLUMNS));
     if (p.type === 'detailed') {
       sections.push('<h3>Сессии</h3>' + htmlTable(sessionRows(ts), SESSION_COLUMNS));
+      sections.push('<h3>Отсутствия</h3>' + htmlTable(absenceRows(ts), ABSENCE_COLUMNS));
       sections.push('<h3>Корректировки</h3>' + htmlTable(correctionRows(ts), CORRECTION_COLUMNS));
     }
   }
@@ -285,7 +329,7 @@ export function build() {
 		postgres('Load Timesheet', {
 			pos: [6, 0],
 			alwaysOutputData: true,
-			query: 'SELECT employee, days, sessions, corrections, totals\n  FROM timetrack.fn_timesheet($1, $2::date, $3::date, $4, $5::boolean)',
+			query: 'SELECT employee, days, sessions, corrections, absences, totals\n  FROM timetrack.fn_timesheet($1, $2::date, $3::date, $4, $5::boolean)',
 			params: '={{ [ $json.employee_id ?? null, $json.from, $json.to, $json.department ?? null, $json.include_inactive === true ] }}',
 		}),
 	);

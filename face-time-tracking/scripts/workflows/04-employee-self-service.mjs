@@ -39,7 +39,7 @@ export function build() {
 			pos: [3, 0],
 			alwaysOutputData: true,
 			query:
-				'SELECT employee, days, sessions, corrections, totals\n' +
+				'SELECT employee, days, sessions, corrections, absences, totals\n' +
 				"  FROM timetrack.fn_timesheet($1, COALESCE(NULLIF($2, '')::date, CURRENT_DATE - 30),\n" +
 				"                              COALESCE(NULLIF($3, '')::date, CURRENT_DATE), NULL, true)",
 			params:

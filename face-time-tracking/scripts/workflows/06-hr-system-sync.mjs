@@ -43,6 +43,69 @@ if (bad.length) problems.push('invalid_records:' + bad.length);
 return [{ json: { ok: problems.length === 0, problems, employees, actor: $input.first().json.client_name } }];
 `;
 
+const VALIDATE_ABSENCES_JS = `
+// Входящие отсутствия: { absences: [ { employee_id, type, date_from, date_to, ... } ] }
+const body = $('Absences Webhook').first().json.body || {};
+const list = Array.isArray(body.absences) ? body.absences : (Array.isArray(body) ? body : null);
+const problems = [];
+if (!list) problems.push('absences_array_required');
+else if (list.length === 0) problems.push('absences_empty');
+else if (list.length > 5000) problems.push('too_many_absences');
+
+const isDate = (s) => typeof s === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+const TYPES = ['vacation', 'sick_leave', 'business_trip', 'remote', 'unpaid_leave', 'other'];
+const absences = (list || []).map((a) => ({
+  employee_id: String(a.employee_id ?? a.employee ?? '').trim(),
+  absence_type: String(a.absence_type ?? a.type ?? '').trim(),
+  date_from: a.date_from ?? a.from ?? null,
+  date_to: a.date_to ?? a.to ?? a.date_from ?? a.from ?? null,
+  status: ['planned', 'approved', 'cancelled'].includes(a.status) ? a.status : 'approved',
+  external_id: a.external_id != null ? String(a.external_id) : null,
+  comment: a.comment ?? null,
+  counts_as_worked: typeof a.counts_as_worked === 'boolean' ? a.counts_as_worked : null,
+}));
+const bad = absences.filter((a) => !a.employee_id || !TYPES.includes(a.absence_type) || !isDate(a.date_from) || !isDate(a.date_to));
+if (bad.length) problems.push('invalid_records:' + bad.length);
+
+return [{ json: { ok: problems.length === 0, problems, absences, actor: $input.first().json.client_name } }];
+`;
+
+const VALIDATE_CALENDAR_JS = `
+// Производственный календарь: { calendar_code: "ru", days: [ { day, day_type, shorten_minutes, name } ] }
+const body = $('Calendar Webhook').first().json.body || {};
+const list = Array.isArray(body.days) ? body.days : (Array.isArray(body) ? body : null);
+const problems = [];
+if (!list) problems.push('days_array_required');
+else if (list.length === 0) problems.push('days_empty');
+else if (list.length > 2000) problems.push('too_many_days');
+
+const code = String(body.calendar_code ?? 'default').trim() || 'default';
+const isDate = (s) => typeof s === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+const days = (list || []).map((d) => ({
+  calendar_code: code,
+  day: d.day ?? d.date ?? null,
+  day_type: String(d.day_type ?? d.type ?? '').trim(),
+  shorten_minutes: Number.isFinite(Number(d.shorten_minutes)) ? Number(d.shorten_minutes) : 60,
+  name: d.name ?? null,
+}));
+const bad = days.filter((d) => !isDate(d.day) || !['holiday', 'workday', 'short_day'].includes(d.day_type));
+if (bad.length) problems.push('invalid_records:' + bad.length);
+
+return [{ json: { ok: problems.length === 0, problems, days, actor: $input.first().json.client_name } }];
+`;
+
+const SUMMARIZE_ABSENCES_JS = `
+const items = $input.all().map((i) => i.json);
+const failed = items.filter((i) => i && (i.ok === false || i.error));
+return [{ json: {
+  ok: failed.length === 0,
+  processed: items.length,
+  saved: items.length - failed.length,
+  failed: failed.length,
+  errors: failed.slice(0, 20).map((i) => i.code ?? String(i.error?.message ?? i.error)),
+} }];
+`;
+
 const SUMMARIZE_JS = `
 const items = $input.all();
 const failed = items.filter((i) => i.json && i.json.error);
@@ -68,6 +131,14 @@ export function build() {
 			'каждое отправляется `POST` на адрес из Config; результат фиксируется `fn_outbox_mark()` (повтор с экспоненциальной паузой, после 10 попыток — dead). ' +
 			'Формат payload описан в docs/hr-integration.md. Для другой HR-системы замените ноду Push To HR System (например, на ноду BambooHR/Personio/1C HTTP).',
 		{ pos: [0, -2.4], width: 1500, height: 200 },
+	);
+	wf.sticky(
+		'## Календарь и отсутствия\n' +
+			'`POST /timetrack/hr/absences` — `{ "absences": [ { employee_id, type: vacation|sick_leave|business_trip|remote|unpaid_leave|other, date_from, date_to, status, external_id, comment } ] }`. ' +
+			'Отпуск и больничный перестают считаться прогулом; командировка и удалёнка засчитываются по норме.\n\n' +
+			'`POST /timetrack/hr/calendar` — `{ "calendar_code": "ru", "days": [ { day, day_type: holiday|workday|short_day, shorten_minutes, name } ] }`. ' +
+			'Праздник отменяет норму дня, перенос делает рабочей субботу, предпраздничный сокращает норму.',
+		{ pos: [0, 5.4], width: 1500, height: 170, color: 3 },
 	);
 	wf.sticky(
 		'## Входящая синхронизация (HR-система → справочник)\n' +
@@ -157,6 +228,85 @@ export function build() {
 	wf.connect('Payload Valid?', 'Split Employees', { output: 0 });
 	wf.connect('Payload Valid?', 'Respond 400', { output: 1 });
 	wf.chain('Split Employees', 'Upsert Employee', 'Summarize Sync', 'Respond Sync Result');
+
+	// ---------- отсутствия из HR-системы ----------
+	wf.add(webhook('Absences Webhook', { path: 'timetrack/hr/absences', pos: [0, 6.4] }));
+	wf.add(authenticate('Authenticate Absences', 'Absences Webhook', [1, 6.4]));
+	wf.add(ifNode('Is HR? (absences)', { pos: [2, 6.4], conditions: truthy("={{ ['hr', 'system'].includes($json.role ?? '') }}") }));
+	wf.add(unauthorized('Respond 401 (absences)', [3, 7.4]));
+	wf.add(code('Validate Absences', { pos: [3, 6.4], js: VALIDATE_ABSENCES_JS }));
+	wf.add(ifNode('Absences Valid?', { pos: [4, 6.4], conditions: truthy('={{ $json.ok === true }}') }));
+	wf.add(
+		respondJson('Respond 400 (absences)', {
+			pos: [5, 7.4],
+			code: 400,
+			body: "={{ ({ ok: false, code: 'validation_failed', problems: $json.problems }) }}",
+		}),
+	);
+	wf.add(splitOut('Split Absences', { field: 'absences', pos: [5, 6.4] }));
+	wf.add(
+		postgres('Upsert Absence', {
+			pos: [6, 6.4],
+			batching: 'independently',
+			onError: 'continueRegularOutput',
+			notes: 'fn_upsert_absence: отпуск, больничный, командировка. Без external_id повтор не создаёт дубль.',
+			query:
+				'SELECT ok, code, absence\n' +
+				'  FROM timetrack.fn_upsert_absence($1, $2, $3::date, $4::date, $5, $6, $7, $8::boolean, $9)',
+			params:
+				'={{ [ $json.employee_id, $json.absence_type, $json.date_from, $json.date_to, $json.status ?? null, ' +
+				'$json.external_id ?? null, $json.comment ?? null, $json.counts_as_worked ?? null, ' +
+				"$('Validate Absences').first().json.actor ?? null ] }}",
+		}),
+	);
+	wf.add(code('Summarize Absences', { pos: [7, 6.4], js: SUMMARIZE_ABSENCES_JS }));
+	wf.add(respondJson('Respond Absences Result', { pos: [8, 6.4], body: '={{ $json }}' }));
+	wf.chain('Absences Webhook', 'Authenticate Absences', 'Is HR? (absences)');
+	wf.connect('Is HR? (absences)', 'Validate Absences', { output: 0 });
+	wf.connect('Is HR? (absences)', 'Respond 401 (absences)', { output: 1 });
+	wf.chain('Validate Absences', 'Absences Valid?');
+	wf.connect('Absences Valid?', 'Split Absences', { output: 0 });
+	wf.connect('Absences Valid?', 'Respond 400 (absences)', { output: 1 });
+	wf.chain('Split Absences', 'Upsert Absence', 'Summarize Absences', 'Respond Absences Result');
+
+	// ---------- производственный календарь ----------
+	wf.add(webhook('Calendar Webhook', { path: 'timetrack/hr/calendar', pos: [0, 8.6] }));
+	wf.add(authenticate('Authenticate Calendar', 'Calendar Webhook', [1, 8.6]));
+	wf.add(ifNode('Is HR? (calendar)', { pos: [2, 8.6], conditions: truthy("={{ ['hr', 'system'].includes($json.role ?? '') }}") }));
+	wf.add(unauthorized('Respond 401 (calendar)', [3, 9.6]));
+	wf.add(code('Validate Calendar', { pos: [3, 8.6], js: VALIDATE_CALENDAR_JS }));
+	wf.add(ifNode('Calendar Valid?', { pos: [4, 8.6], conditions: truthy('={{ $json.ok === true }}') }));
+	wf.add(
+		respondJson('Respond 400 (calendar)', {
+			pos: [5, 9.6],
+			code: 400,
+			body: "={{ ({ ok: false, code: 'validation_failed', problems: $json.problems }) }}",
+		}),
+	);
+	wf.add(splitOut('Split Calendar Days', { field: 'days', pos: [5, 8.6] }));
+	wf.add(
+		postgres('Upsert Calendar Day', {
+			pos: [6, 8.6],
+			batching: 'independently',
+			onError: 'continueRegularOutput',
+			notes: 'holiday — нерабочий день, workday — перенос (рабочая суббота), short_day — предпраздничный.',
+			query:
+				'SELECT calendar_code, day, day_type, shorten_minutes, name\n' +
+				'  FROM timetrack.fn_upsert_calendar_day($1::date, $2, $3::int, $4, $5, $6)',
+			params:
+				'={{ [ $json.day, $json.day_type, $json.shorten_minutes ?? 0, $json.name ?? null, $json.calendar_code ?? null, ' +
+				"$('Validate Calendar').first().json.actor ?? null ] }}",
+		}),
+	);
+	wf.add(code('Summarize Calendar', { pos: [7, 8.6], js: SUMMARIZE_JS }));
+	wf.add(respondJson('Respond Calendar Result', { pos: [8, 8.6], body: '={{ $json }}' }));
+	wf.chain('Calendar Webhook', 'Authenticate Calendar', 'Is HR? (calendar)');
+	wf.connect('Is HR? (calendar)', 'Validate Calendar', { output: 0 });
+	wf.connect('Is HR? (calendar)', 'Respond 401 (calendar)', { output: 1 });
+	wf.chain('Validate Calendar', 'Calendar Valid?');
+	wf.connect('Calendar Valid?', 'Split Calendar Days', { output: 0 });
+	wf.connect('Calendar Valid?', 'Respond 400 (calendar)', { output: 1 });
+	wf.chain('Split Calendar Days', 'Upsert Calendar Day', 'Summarize Calendar', 'Respond Calendar Result');
 
 	return wf;
 }
