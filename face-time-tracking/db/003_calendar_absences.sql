@@ -328,6 +328,18 @@ BEGIN
         RETURN;
     END IF;
 
+    -- 1a. Повторная проверка идемпотентности уже под блокировкой сотрудника:
+    --     параллельные повторы одного request_id ждали здесь и не видели строку
+    --     в шаге 0 (их снимок был сделан до получения блокировки).
+    IF NULLIF(p_request_id, '') IS NOT NULL THEN
+        SELECT a.* INTO v_row FROM timetrack.attendance_events a WHERE a.request_id = p_request_id;
+        IF FOUND THEN
+            RETURN QUERY SELECT true, 'duplicate_request', v_row.id, v_row.event_type, v_row.occurred_at, true,
+                                v_emp.employee_id, v_emp.full_name, v_emp.timezone;
+            RETURN;
+        END IF;
+    END IF;
+
     -- 2. Время события
     IF p_captured_at IS NOT NULL THEN
         IF p_captured_at BETWEEN now() - make_interval(hours => GREATEST(COALESCE(p_max_backdate_hours, 24), 1))
@@ -371,13 +383,25 @@ BEGIN
         v_meta := v_meta || jsonb_build_object('during_absence', v_abs.absence_type);
     END IF;
 
-    INSERT INTO timetrack.attendance_events
-        (employee_id, event_type, occurred_at, source, device_id, location,
-         confidence, liveness_score, image_hash, request_id, created_by, metadata)
-    VALUES
-        (p_employee_id, v_type, v_at, COALESCE(p_source, 'face'), p_device_id, p_location,
-         p_confidence, p_liveness_score, p_image_hash, NULLIF(p_request_id, ''), p_actor, v_meta)
-    RETURNING * INTO v_row;
+    BEGIN
+        INSERT INTO timetrack.attendance_events
+            (employee_id, event_type, occurred_at, source, device_id, location,
+             confidence, liveness_score, image_hash, request_id, created_by, metadata)
+        VALUES
+            (p_employee_id, v_type, v_at, COALESCE(p_source, 'face'), p_device_id, p_location,
+             p_confidence, p_liveness_score, p_image_hash, NULLIF(p_request_id, ''), p_actor, v_meta)
+        RETURNING * INTO v_row;
+    EXCEPTION WHEN unique_violation THEN
+        -- то же событие успел записать параллельный запрос: отвечаем как на дубликат,
+        -- а не ошибкой базы (терминал повторяет запрос при обрыве связи)
+        SELECT a.* INTO v_row FROM timetrack.attendance_events a WHERE a.request_id = NULLIF(p_request_id, '');
+        IF NOT FOUND THEN
+            RAISE;
+        END IF;
+        RETURN QUERY SELECT true, 'duplicate_request', v_row.id, v_row.event_type, v_row.occurred_at, true,
+                            v_emp.employee_id, v_emp.full_name, v_emp.timezone;
+        RETURN;
+    END;
 
     PERFORM timetrack.fn_audit(p_actor, v_role, 'attendance.' || v_type, 'attendance_event', v_row.id::text,
                                jsonb_build_object('employee_id', p_employee_id, 'source', v_row.source,

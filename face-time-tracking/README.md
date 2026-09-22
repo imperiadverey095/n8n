@@ -102,7 +102,8 @@ docker compose logs postgres | grep -A6 token_kind   # демо-токены п�
 ```bash
 node scripts/build-workflows.mjs      # собрать workflows/*.json из scripts/workflows/*.mjs
 node scripts/validate-workflows.mjs   # структурная проверка + типы/версии нод по packages/nodes-base
-scripts/test-db.sh                    # схема + самотест + демо-данные на временном PostgreSQL (docker или DATABASE_URL)
+scripts/test-db.sh                    # схема + модуль календаря + самотест + демо-данные на временном PostgreSQL
+DATABASE_URL=... scripts/test-concurrency.sh   # нагрузка и гонка по ключу идемпотентности (pgbench)
 ```
 
 Правило: правки воркфлоу вносятся в `scripts/workflows/*.mjs`, затем пересборка и валидация; правки логики — в `db/001_schema.sql` с новым сценарием в `db/900_selftest.sql`.
