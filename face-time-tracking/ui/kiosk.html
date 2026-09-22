@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='19' font-size='20'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E">
+<title>Терминал учёта времени</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --line: #334155; --text: #e2e8f0; --muted: #94a3b8;
+    --ok: #16a34a; --warn: #d97706; --err: #dc2626; --accent: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+  .screen { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; }
+  header { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
+           align-items: center; padding: 12px 18px; font-size: 14px; color: var(--muted); }
+  #clock { font-variant-numeric: tabular-nums; font-size: 18px; color: var(--text); }
+  .badge { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+  .badge.offline { border-color: var(--warn); color: #fbbf24; }
+  video { width: min(72vw, 520px); aspect-ratio: 4/3; object-fit: cover; border-radius: 18px;
+          background: #000; border: 2px solid var(--line); transform: scaleX(-1); }
+  button { font: inherit; cursor: pointer; border-radius: 14px; border: 1px solid transparent; }
+  #capture { font-size: 26px; font-weight: 600; padding: 20px 56px; background: var(--accent); color: #fff; min-width: 320px; }
+  #capture:disabled { opacity: .5; cursor: default; }
+  .link { background: none; border: none; color: var(--muted); text-decoration: underline; font-size: 14px; padding: 6px; }
+  .hint { color: var(--muted); font-size: 15px; text-align: center; max-width: 520px; line-height: 1.5; }
+  /* результат */
+  #result { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center;
+            justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+  #result.show { display: flex; }
+  #result.ok { background: #052e16; } #result.warn { background: #3f2d06; } #result.err { background: #450a0a; }
+  #icon { font-size: 76px; line-height: 1; }
+  #title { font-size: clamp(30px, 6vw, 54px); font-weight: 700; }
+  #subtitle { font-size: clamp(18px, 3vw, 26px); }
+  #detail { color: var(--muted); font-size: 15px; }
+  /* настройки */
+  #settings { position: fixed; inset: 0; background: rgba(15,23,42,.97); display: none; padding: 24px; overflow: auto; }
+  #settings.show { display: block; }
+  form { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+  input, select { font: inherit; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line);
+                  background: var(--panel); color: var(--text); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .primary { background: var(--accent); color: #fff; padding: 12px; }
+  .ghost { background: var(--panel); color: var(--text); border-color: var(--line); padding: 12px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+</style>
+</head>
+<body>
+<header>
+  <span id="device">терминал</span>
+  <span id="clock"></span>
+  <span class="badge" id="queueBadge" hidden>очередь: <span id="queueCount">0</span></span>
+</header>
+
+<div class="screen" id="main">
+  <video id="video" autoplay playsinline muted></video>
+  <button id="capture">Отметиться</button>
+  <p class="hint" id="hint">Встаньте лицом к камере и нажмите кнопку. Снимок используется только для распознавания и нигде не сохраняется.</p>
+  <button class="link" id="openSettings">Настройки терминала</button>
+</div>
+
+<div id="result">
+  <div id="icon"></div>
+  <div id="title"></div>
+  <div id="subtitle"></div>
+  <div id="detail"></div>
+</div>
+
+<div id="settings">
+  <form id="settingsForm">
+    <h1>Настройки терминала</h1>
+    <label>Адрес вебхука n8n
+      <input name="baseUrl" placeholder="https://n8n.example.com" required>
+    </label>
+    <label>Токен терминала (роль device)
+      <input name="token" type="password" placeholder="выпускается функцией fn_issue_token" required>
+    </label>
+    <div class="row">
+      <label>Идентификатор терминала<input name="deviceId" placeholder="kiosk-1"></label>
+      <label>Место<input name="location" placeholder="Проходная"></label>
+    </div>
+    <label>Тип отметки
+      <select name="eventType">
+        <option value="auto">Автоматически (чередование прихода и ухода)</option>
+        <option value="check_in">Только приход</option>
+        <option value="check_out">Только уход</option>
+      </select>
+    </label>
+    <div class="row">
+      <button type="submit" class="primary">Сохранить</button>
+      <button type="button" class="ghost" id="closeSettings">Закрыть</button>
+    </div>
+    <p class="hint">Настройки хранятся только в этом браузере. Очередь неотправленных отметок: <span id="queueInfo">0</span>.</p>
+  </form>
+</div>
+
+<script>
+const LS_SETTINGS = 'timetrack.kiosk.settings';
+const LS_QUEUE = 'timetrack.kiosk.queue';
+const $ = (id) => document.getElementById(id);
+
+const load = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+
+let settings = load(LS_SETTINGS, { baseUrl: location.origin, token: '', deviceId: 'kiosk-1', location: '', eventType: 'auto' });
+let queue = load(LS_QUEUE, []);
+let busy = false;
+
+// ---------- часы и служебные надписи ----------
+setInterval(() => { $('clock').textContent = new Date().toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }); }, 1000);
+function renderQueue() {
+  $('queueCount').textContent = queue.length;
+  $('queueInfo').textContent = queue.length;
+  $('queueBadge').hidden = queue.length === 0;
+  $('queueBadge').classList.toggle('offline', queue.length > 0);
+  $('device').textContent = settings.deviceId || 'терминал';
+}
+
+// ---------- камера ----------
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } }, audio: false });
+    $('video').srcObject = stream;
+  } catch (e) {
+    $('hint').textContent = 'Нет доступа к камере: ' + (e.message || e) + '. Разрешите камеру в настройках браузера.';
+    $('capture').disabled = true;
+  }
+}
+
+function grabFrame() {
+  const video = $('video');
+  const size = Math.min(video.videoWidth || 640, video.videoHeight || 480);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // кадр берётся без зеркального отражения — распознаванию нужен исходный вид
+  ctx.drawImage(video, ((video.videoWidth || size) - size) / 2, ((video.videoHeight || size) - size) / 2, size, size, 0, 0, size, size);
+  return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.85));
+}
+
+// ---------- отправка ----------
+const MESSAGES = {
+  no_face: ['warn', 'Лицо не найдено', 'Встаньте ближе к камере и повторите'],
+  multiple_faces: ['warn', 'В кадре несколько человек', 'Подходите к терминалу по одному'],
+  unknown_face: ['err', 'Лицо не распознано', 'Обратитесь в отдел кадров для регистрации'],
+  low_similarity: ['err', 'Лицо не распознано', 'Попробуйте ещё раз при лучшем освещении'],
+  employee_mismatch: ['err', 'Лицо не совпадает', 'Отметка отклонена'],
+  consent_missing: ['err', 'Нет согласия на биометрию', 'Отметьтесь вручную или обратитесь в отдел кадров'],
+  employee_inactive: ['err', 'Сотрудник неактивен', 'Обратитесь в отдел кадров'],
+  employee_not_found: ['err', 'Сотрудник не найден', 'Обратитесь в отдел кадров'],
+  face_service_unavailable: ['warn', 'Сервис распознавания недоступен', 'Отметка не записана, попробуйте позже'],
+  face_service_error: ['warn', 'Ошибка распознавания', 'Попробуйте ещё раз'],
+  unauthorized: ['err', 'Терминал не авторизован', 'Проверьте токен в настройках'],
+  bad_request: ['warn', 'Снимок не получен', 'Повторите попытку'],
+};
+
+function showResult(kind, icon, title, subtitle, detail) {
+  const box = $('result');
+  box.className = 'show ' + kind;
+  $('icon').textContent = icon;
+  $('title').textContent = title;
+  $('subtitle').textContent = subtitle || '';
+  $('detail').textContent = detail || '';
+  clearTimeout(showResult.timer);
+  showResult.timer = setTimeout(() => { box.className = ''; }, kind === 'ok' ? 4500 : 6000);
+}
+
+function describeSuccess(data) {
+  const time = data.occurred_at ? new Date(data.occurred_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+  const what = data.event_type === 'check_in' ? 'Приход' : 'Уход';
+  const repeat = data.duplicate ? ' (отметка уже была записана)' : '';
+  showResult('ok', data.event_type === 'check_in' ? '✓' : '→', data.full_name || data.employee_id,
+             `${what} · ${time}${repeat}`,
+             data.similarity ? `схожесть ${(data.similarity * 100).toFixed(1)}%` : '');
+}
+
+async function send(item) {
+  const form = new FormData();
+  form.append('image', item.blob, 'capture.jpg');
+  form.append('request_id', item.request_id);
+  form.append('captured_at', item.captured_at);
+  if (item.device_id) form.append('device_id', item.device_id);
+  if (item.location) form.append('location', item.location);
+  if (item.event_type && item.event_type !== 'auto') form.append('event_type', item.event_type);
+  const res = await fetch(item.baseUrl.replace(/\/$/, '') + '/webhook/timetrack/clock', {
+    method: 'POST', headers: { 'X-Api-Token': item.token }, body: form,
+  });
+  const data = await res.json().catch(() => ({ ok: false, code: 'bad_response' }));
+  return { status: res.status, data };
+}
+
+async function capture() {
+  if (busy) return;
+  if (!settings.token || !settings.baseUrl) { openSettings(); return; }
+  busy = true; $('capture').disabled = true;
+  try {
+    const blob = await grabFrame();
+    if (!blob) { showResult('warn', '!', 'Не удалось сделать снимок', 'Повторите попытку'); return; }
+    const item = {
+      blob, request_id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+      captured_at: new Date().toISOString(), device_id: settings.deviceId, location: settings.location,
+      event_type: settings.eventType, baseUrl: settings.baseUrl, token: settings.token,
+    };
+    try {
+      const { status, data } = await send(item);
+      if (data.ok) describeSuccess(data);
+      else {
+        const [kind, title, sub] = MESSAGES[data.code] || ['err', 'Отметка отклонена', data.message || data.code || ('HTTP ' + status)];
+        showResult(kind, kind === 'ok' ? '✓' : '×', title, sub);
+      }
+    } catch (e) {
+      // сеть недоступна: кладём в очередь с временем снимка и повторим позже
+      await enqueue(item);
+      showResult('warn', '⏳', 'Нет связи с сервером', 'Отметка сохранена и будет отправлена автоматически',
+                 'время снимка: ' + new Date(item.captured_at).toLocaleTimeString('ru-RU'));
+    }
+  } finally {
+    busy = false; $('capture').disabled = false;
+  }
+}
+
+// ---------- офлайн-очередь ----------
+const blobToBase64 = (blob) => new Promise((resolve) => {
+  const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1]); r.readAsDataURL(blob);
+});
+const base64ToBlob = (b64) => fetch('data:image/jpeg;base64,' + b64).then((r) => r.blob());
+
+async function enqueue(item) {
+  // снимок хранится только здесь и только до успешной отправки
+  queue.push({ ...item, blob: undefined, image: await blobToBase64(item.blob) });
+  if (queue.length > 50) queue = queue.slice(-50);
+  save(LS_QUEUE, queue); renderQueue();
+}
+
+async function flushQueue() {
+  if (!queue.length || busy) return;
+  const rest = [];
+  for (const q of queue) {
+    try {
+      const item = { ...q, blob: await base64ToBlob(q.image) };
+      const { data } = await send(item);
+      // 5xx и сетевые ошибки оставляем в очереди, ответ сервера (в т.ч. отказ) — снимаем
+      if (!data || data.code === 'bad_response') rest.push(q);
+    } catch { rest.push(q); }
+  }
+  queue = rest; save(LS_QUEUE, queue); renderQueue();
+}
+setInterval(flushQueue, 20000);
+window.addEventListener('online', flushQueue);
+
+// ---------- настройки ----------
+function openSettings() {
+  const f = $('settingsForm');
+  for (const [k, v] of Object.entries(settings)) if (f.elements[k]) f.elements[k].value = v ?? '';
+  $('settings').classList.add('show');
+}
+$('openSettings').onclick = openSettings;
+$('closeSettings').onclick = () => $('settings').classList.remove('show');
+$('settingsForm').onsubmit = (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  settings = Object.fromEntries(f.entries());
+  save(LS_SETTINGS, settings); renderQueue();
+  $('settings').classList.remove('show');
+};
+$('capture').onclick = capture;
+document.addEventListener('keydown', (e) => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); capture(); } });
+
+renderQueue();
+startCamera();
+flushQueue();
+</script>
+</body>
+</html>

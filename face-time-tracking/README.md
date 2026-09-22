@@ -39,6 +39,7 @@ flowchart LR
 | `db/900_selftest.sql`, `scripts/test-db.sh` | самотест схемы (7 групп сценариев, откатывается) |
 | `db/002_seed_demo.sql` | демо-сотрудники, токены и история для стенда |
 | `docker-compose.yml`, `.env.example` | стенд: n8n + PostgreSQL + CompreFace |
+| `ui/` | интерфейсы: терминал проходной, личный кабинет сотрудника, панель отдела кадров (+ dev-сервер для локального запуска без n8n) |
 | `docs/walkthrough.md`, `examples/` | разбор на примере одного рабочего дня: реальный прогон, ответы терминалу, отчёты, скриншот; `examples/run-demo.sh` воспроизводит всё одной командой |
 | `docs/api.md` | контракты всех эндпоинтов |
 | `docs/reports.md` | правила расчёта табеля и типы отчётов |
@@ -60,6 +61,8 @@ flowchart LR
 | 06 | HR System Sync | cron каждые 15 мин, `POST /timetrack/hr/employees`, `/hr/absences`, `/hr/calendar` | доставка событий в HR-систему через outbox, приём справочника сотрудников, отпусков и производственного календаря |
 | 07 | Data Retention | cron ежедневно | удаление биометрии уволенных/отозвавших согласие, очистка журналов |
 
+Интерфейсы (`ui/kiosk.html`, `ui/employee.html`, `ui/hr.html`) — самостоятельные страницы без сборки, обращаются к тем же вебхукам; подробности в [ui/README.md](ui/README.md).
+
 ## Быстрый старт (стенд)
 
 ```bash
@@ -77,6 +80,7 @@ docker compose logs postgres | grep -A6 token_kind   # демо-токены п�
    * `HR System API` — Header Auth для приёмника событий (можно заглушку, если интеграции пока нет).
 3. **Импорт воркфлоу**: `scripts/import-workflows.sh compose` (или через UI *Import from file*). В настройках каждого воркфлоу назначьте *Error Workflow* → «Timetrack 00 — Error Handler», проверьте ноды *Config* (адрес CompreFace, пороги, e-mail) и активируйте.
 4. **Проверка**: `HR_TOKEN=… DEVICE_TOKEN=… EMPLOYEE_TOKEN=… ENROLL_PHOTO=a.jpg CLOCK_PHOTO=b.jpg scripts/smoke-test.sh` — регистрация, отметка, антидребезг, ручная отметка, корректировка, отчёты.
+5. **Интерфейсы**: откройте `ui/kiosk.html` на планшете проходной, `ui/employee.html` и `ui/hr.html` — на рабочих местах; в настройках каждой страницы укажите адрес n8n и соответствующий токен.
 
 Для существующего n8n: примените `db/001_schema.sql` и `db/003_calendar_absences.sql` к своей PostgreSQL, поднимите CompreFace (официальный `docker-compose` проекта) и импортируйте `workflows/*.json`.
 
