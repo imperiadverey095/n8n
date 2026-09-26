@@ -67,9 +67,11 @@ return [{
 `;
 
 const ATTACH_JS = `
-// Postgres-нода не пропускает binary дальше — возвращаем снимок из шага валидации.
-const info = $input.first().json;
-return [{ json: info, binary: $('Validate Enrollment').first().binary }];
+// Postgres-нода отдаёт только колонки запроса и теряет binary, поэтому снимок и
+// остальные поля (в том числе actor для аудита) возвращаются из шага валидации.
+const validated = $('Validate Enrollment').first();
+const info = { ...validated.json, ...$input.first().json };
+return [{ json: info, binary: validated.binary }];
 `;
 
 const INTERPRET_JS = `

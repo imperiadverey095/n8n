@@ -6,6 +6,11 @@ import {
 const CFG = "$('Config').first().json";
 const CFG_R = "$('Config (review)').first().json";
 
+// Время в письмах — в привычном формате и с явным указанием пояса: сотрудник и
+// кадровик могут сидеть в разных зонах, и «13:02» без пояса порождает споры.
+const LOCAL_TIME =
+	'((t, z) => t ? DateTime.fromISO(t).setZone(z).toFormat("dd.MM.yyyy HH:mm") + " (" + z + ")" : "—")';
+
 export function build() {
 	const wf = new WorkflowBuilder({
 		name: 'Timetrack 04 — Employee Self-Service',
@@ -58,8 +63,8 @@ export function build() {
 	wf.add(
 		setNode('Config', {
 			pos: [1, 2],
-			fields: { hrEmail: 'hr@example.com', fromEmail: 'timetrack@example.com', maxCorrectionAgeDays: 45 },
-			notes: 'Адрес HR для уведомлений и допустимая давность корректируемых событий.',
+			fields: { hrEmail: 'hr@example.com', fromEmail: 'timetrack@example.com', maxCorrectionAgeDays: 45, timezone: 'Europe/Moscow' },
+			notes: 'Адрес HR для уведомлений, допустимая давность корректируемых событий и часовой пояс организации для времени в письмах.',
 		}),
 	);
 	wf.add(authenticate('Authenticate (correction)', 'Correction Webhook', [2, 2]));
@@ -90,8 +95,9 @@ export function build() {
 			subject: '=[Учёт времени] Запрос на корректировку от {{ $json.request.employee_id }}',
 			html:
 				'=<p>Сотрудник <b>{{ $json.request.employee_id }}</b> запросил корректировку отметки.</p>' +
-				'<ul><li>Действие: {{ $json.request.action }}</li><li>Событие: {{ $json.request.event_id ?? "—" }}</li>' +
-				'<li>Тип: {{ $json.request.requested_type ?? "—" }}</li><li>Время: {{ $json.request.requested_time ?? "—" }}</li>' +
+				`<ul><li>Действие: {{ ({add:'добавить отметку',change:'исправить время',void:'аннулировать отметку'})[$json.request.action] ?? $json.request.action }}</li><li>Событие: {{ $json.request.event_id ?? '—' }}</li>` +
+				`<li>Тип: {{ ({check_in:'приход',check_out:'уход'})[$json.request.requested_type] ?? ($json.request.requested_type ?? '—') }}</li>` +
+				`<li>Время: {{ ${LOCAL_TIME}($json.request.requested_time, ${CFG}.timezone) }}</li>` +
 				`<li>Причина: {{ String($json.request.reason ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul>` +
 				'<p>ID запроса: <code>{{ $json.request.id }}</code>. Рассмотрите его через <code>POST /webhook/timetrack/hr/corrections/review</code>.</p>',
 			notes: 'Если SMTP не настроен, нода пропускается (continue on error) и запрос всё равно создаётся.',
@@ -154,7 +160,7 @@ export function build() {
 
 	// ---------- решение HR ----------
 	wf.add(webhook('Review Webhook', { path: 'timetrack/hr/corrections/review', pos: [0, 7.2] }));
-	wf.add(setNode('Config (review)', { pos: [1, 7.2], fields: { fromEmail: 'timetrack@example.com' } }));
+	wf.add(setNode('Config (review)', { pos: [1, 7.2], fields: { fromEmail: 'timetrack@example.com', timezone: 'Europe/Moscow' } }));
 	wf.add(authenticate('Authenticate (review)', 'Review Webhook', [2, 7.2]));
 	wf.add(ifNode('Is HR? (review)', { pos: [3, 7.2], conditions: truthy("={{ ['hr', 'system'].includes($json.role ?? '') }}") }));
 	wf.add(unauthorized('Respond 401 (review)', [4, 8.2]));
@@ -185,9 +191,9 @@ export function build() {
 			to: '={{ $json.email }}',
 			subject: "=[Учёт времени] Ваш запрос на корректировку {{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}",
 			html:
-				"=<p>Здравствуйте, {{ $json.full_name }}!</p><p>Ваш запрос на корректировку отметки <b>{{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}</b>." +
-				"</p><ul><li>Действие: {{ $('Review Correction').first().json.request.action }}</li>" +
-				"<li>Время: {{ $('Review Correction').first().json.request.requested_time ?? '—' }}</li>" +
+				"=<p>Здравствуйте, {{ $json.full_name }}!</p><p>Ваш запрос на корректировку отметки <b>{{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}</b>.</p>" +
+				`<ul><li>Действие: {{ ({add:'добавить отметку',change:'исправить время',void:'аннулировать отметку'})[$('Review Correction').first().json.request.action] ?? $('Review Correction').first().json.request.action }}</li>` +
+				`<li>Время: {{ ${LOCAL_TIME}($('Review Correction').first().json.request.requested_time, $json.timezone || ${CFG_R}.timezone) }}</li>` +
 				`<li>Комментарий HR: {{ String($('Review Correction').first().json.request.review_comment ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul>`,
 		}),
 	);

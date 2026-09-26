@@ -1,4 +1,5 @@
 {
+  "id": "VlWzXKqPHq1cbBuE",
   "name": "Timetrack 01 — Employee Enrollment",
   "nodes": [
     {
@@ -265,7 +266,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Postgres-нода не пропускает binary дальше — возвращаем снимок из шага валидации.\nconst info = $input.first().json;\nreturn [{ json: info, binary: $('Validate Enrollment').first().binary }];\n"
+        "jsCode": "// Postgres-нода отдаёт только колонки запроса и теряет binary, поэтому снимок и\n// остальные поля (в том числе actor для аудита) возвращаются из шага валидации.\nconst validated = $('Validate Enrollment').first();\nconst info = { ...validated.json, ...$input.first().json };\nreturn [{ json: info, binary: validated.binary }];\n"
       },
       "id": "b21413c4-88c4-51eb-9fa7-4666aa0d4f55",
       "name": "Attach Image",

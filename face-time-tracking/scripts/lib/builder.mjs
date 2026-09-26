@@ -52,6 +52,22 @@ export function uuidFrom(seed) {
 	].join('-');
 }
 
+// Алфавит идентификаторов n8n (NANOID_ALPHABET), 16 символов.
+const ID_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+/**
+ * Стабильный идентификатор воркфлоу из его имени. `n8n import:workflow`
+ * делает upsert по полю `id`: без него каждый импорт создаёт ещё одну копию
+ * воркфлоу, а вебхуки остаются за старой. Детерминированный id превращает
+ * повторный импорт в обновление на месте.
+ */
+export function idFrom(seed) {
+	const h = createHash('sha1').update(String(seed)).digest();
+	let out = '';
+	for (let i = 0; i < 16; i += 1) out += ID_ALPHABET[h[i] % ID_ALPHABET.length];
+	return out;
+}
+
 /** Условие для нод If / Filter / Switch (формат filter v2). */
 export function cond(leftValue, operator, rightValue = '', id = undefined) {
 	const [type, operation] = operator.split(':');
@@ -187,6 +203,8 @@ export class WorkflowBuilder {
 			}
 		}
 		return {
+			// id обязателен: импорт делает upsert по нему, иначе плодятся копии.
+			id: idFrom(`workflow:${this.name}`),
 			name: this.name,
 			nodes: this.nodes,
 			connections: this.connections,
