@@ -338,12 +338,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Политика хранения: удаление биометрии уволенных/отозвавших согласие, очистка журналов"
+    "description": "Политика хранения: удаление биометрии уволенных/отозвавших согласие, очистка журналов",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

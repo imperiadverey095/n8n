@@ -617,12 +617,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Табели и отчёты по посещаемости по запросу: standard / detailed / summary в json, csv или html"
+    "description": "Табели и отчёты по посещаемости по запросу: standard / detailed / summary в json, csv или html",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

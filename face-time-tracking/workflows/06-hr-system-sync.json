@@ -1280,12 +1280,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Исходящая доставка событий в HR-систему (outbox) и входящая синхронизация справочника сотрудников"
+    "description": "Исходящая доставка событий в HR-систему (outbox) и входящая синхронизация справочника сотрудников",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

@@ -192,8 +192,10 @@ export class WorkflowBuilder {
 			connections: this.connections,
 			settings: this.settings,
 			pinData: {},
-			meta: { templateCredsSetupCompleted: false, description: this.description },
-			tags: this.tags.map((t) => ({ name: t })),
+			// Теги в экспорт не включаются: `n8n import:workflow --separate` создаёт тег
+			// на каждый файл и падает на уникальности имени, если тег общий.
+			// Назначайте теги в интерфейсе после импорта.
+			meta: { templateCredsSetupCompleted: false, description: this.description, tags: this.tags },
 			active: false,
 		};
 	}

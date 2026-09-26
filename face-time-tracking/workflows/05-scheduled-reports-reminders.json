@@ -511,12 +511,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Ежемесячный табель для HR (CSV + HTML) и еженедельные напоминания сотрудникам о проблемных днях"
+    "description": "Ежемесячный табель для HR (CSV + HTML) и еженедельные напоминания сотрудникам о проблемных днях",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

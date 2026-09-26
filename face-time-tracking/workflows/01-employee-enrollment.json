@@ -977,12 +977,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Регистрация сотрудника и его лица (с фиксацией согласия), отзыв биометрии"
+    "description": "Регистрация сотрудника и его лица (с фиксацией согласия), отзыв биометрии",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

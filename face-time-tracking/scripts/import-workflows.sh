@@ -10,8 +10,12 @@ MODE="${1:-compose}"
 
 case "$MODE" in
   compose)
+    docker compose exec n8n n8n import:credentials --input=/workflows/../credentials.json 2>/dev/null || true
     docker compose exec n8n n8n import:workflow --separate --input=/workflows
-    echo "Импортировано. Активируйте воркфлоу в UI и назначьте Error Workflow (Timetrack 00) в настройках каждого."
+    # В n8n 2.x активация делается по одному воркфлоу: update:workflow --all больше не поддерживается
+    docker compose exec n8n sh -lc 'n8n list:workflow | cut -d"|" -f1 | while read -r id; do [ -n "$id" ] && n8n publish:workflow --id="$id"; done'
+    docker compose restart n8n
+    echo "Импортировано и опубликовано. Назначьте Error Workflow (Timetrack 00) в настройках каждого воркфлоу и проверьте ноды Config."
     ;;
   api)
     : "${N8N_URL:?N8N_URL required}" "${N8N_API_KEY:?N8N_API_KEY required}"

@@ -1178,12 +1178,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Личный кабинет: просмотр своих отметок, запросы на корректировку, рассмотрение HR"
+    "description": "Личный кабинет: просмотр своих отметок, запросы на корректировку, рассмотрение HR",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

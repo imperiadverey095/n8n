@@ -967,12 +967,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Отметка прихода/ухода по фото (CompreFace) и ручная отметка по личному токену"
+    "description": "Отметка прихода/ухода по фото (CompreFace) и ручная отметка по личному токену",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }

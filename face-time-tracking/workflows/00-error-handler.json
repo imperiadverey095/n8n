@@ -157,12 +157,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Уведомление администратора и запись в аудит при сбое любого воркфлоу учёта времени"
+    "description": "Уведомление администратора и запись в аудит при сбое любого воркфлоу учёта времени",
+    "tags": [
+      "timetrack"
+    ]
   },
-  "tags": [
-    {
-      "name": "timetrack"
-    }
-  ],
   "active": false
 }
