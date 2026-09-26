@@ -1,0 +1,7 @@
+# Локальный стенд: секреты и данные наружу не коммитятся
+stand/.env
+stand/credentials.json
+stand/mail/
+stand/tok.*
+stand/workflows/
+stand/*.log
