@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='19' font-size='20'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E">
+<title>Мои отметки рабочего времени</title>
+<style>
+  :root { --bg:#f8fafc; --card:#fff; --line:#e2e8f0; --text:#0f172a; --muted:#64748b; --accent:#2563eb;
+          --ok:#16a34a; --warn:#d97706; --err:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-size:15px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 28px 0 10px; }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 14px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  tr:hover td { background: #f1f5f9; }
+  .tag { display:inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .t-present { background:#dcfce7; color:#166534; } .t-late { background:#fef3c7; color:#92400e; }
+  .t-incomplete { background:#fee2e2; color:#991b1b; } .t-absent { background:#fee2e2; color:#991b1b; }
+  .t-off { background:#e2e8f0; color:#475569; } .t-absence { background:#dbeafe; color:#1e40af; }
+  input, select, textarea, button { font: inherit; }
+  input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--text); }
+  label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+  label > span { display:block; margin-bottom: 4px; }
+  button { cursor: pointer; border-radius: 10px; border: 1px solid transparent; padding: 10px 16px; }
+  .primary { background: var(--accent); color:#fff; } .ghost { background:#fff; border-color: var(--line); }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .kpi b { display:block; font-size: 24px; margin-top: 2px; }
+  .msg { padding: 11px 14px; border-radius: 10px; margin-top: 12px; display:none; }
+  .msg.ok { background:#dcfce7; color:#166534; display:block; } .msg.err { background:#fee2e2; color:#991b1b; display:block; }
+  .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .row > label { flex: 1 1 160px; margin-bottom: 0; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Мои отметки рабочего времени</h1>
+  <p class="muted">Проверьте свои приходы и уходы. Если запись неверна, отправьте запрос на корректировку — его рассмотрит отдел кадров.</p>
+
+  <div class="card" id="authCard">
+    <div class="row">
+      <label style="flex:2 1 320px"><span>Личный токен</span><input id="token" type="password" placeholder="выдаётся отделом кадров"></label>
+      <label><span>Адрес сервиса</span><input id="baseUrl" placeholder="https://n8n.example.com"></label>
+      <button class="primary" id="loginBtn">Войти</button>
+    </div>
+    <div class="msg" id="authMsg"></div>
+  </div>
+
+  <div id="app" hidden>
+    <div class="card">
+      <div class="row">
+        <label><span>С</span><input id="from" type="date"></label>
+        <label><span>По</span><input id="to" type="date"></label>
+        <button class="ghost" id="reload">Обновить</button>
+        <button class="ghost" id="logout">Выйти</button>
+      </div>
+    </div>
+
+    <div class="grid" id="kpis"></div>
+
+    <h2>По дням</h2>
+    <div class="card scroll"><table id="days"></table></div>
+
+    <h2>Запросить корректировку</h2>
+    <div class="card">
+      <form id="correctionForm">
+        <div class="row">
+          <label><span>Что сделать</span>
+            <select name="action">
+              <option value="add">Добавить пропущенную отметку</option>
+              <option value="change">Исправить время отметки</option>
+              <option value="void">Аннулировать ошибочную отметку</option>
+            </select>
+          </label>
+          <label id="eventPick"><span>Какая отметка</span><select name="event_id"></select></label>
+          <label id="typePick"><span>Тип</span>
+            <select name="requested_type"><option value="check_in">Приход</option><option value="check_out">Уход</option></select>
+          </label>
+          <label id="timePick"><span>Время</span><input name="requested_time" type="datetime-local"></label>
+        </div>
+        <label><span>Причина (обязательно)</span><textarea name="reason" rows="2" placeholder="Например: забыл отметиться на выходе, ушёл в 17:30"></textarea></label>
+        <button class="primary" type="submit">Отправить запрос</button>
+        <div class="msg" id="corrMsg"></div>
+      </form>
+    </div>
+
+    <h2>Мои запросы</h2>
+    <div class="card scroll"><table id="corrections"></table></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LS = 'timetrack.employee';
+const STATUS = { present:['присутствовал','t-present'], late:['опоздание','t-late'], incomplete:['не закрыта смена','t-incomplete'],
+  absent:['отсутствие','t-absent'], day_off:['выходной','t-off'], holiday:['праздник','t-off'],
+  vacation:['отпуск','t-absence'], sick_leave:['больничный','t-absence'], business_trip:['командировка','t-absence'],
+  remote:['удалённо','t-absence'], unpaid_leave:['отпуск без сохранения','t-absence'], other:['отсутствие','t-absence'] };
+const REQ_STATUS = { pending: 'на рассмотрении', approved: 'одобрен', rejected: 'отклонён', cancelled: 'отменён' };
+let cfg = (() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } })();
+let data = null;
+
+const fmtMin = (m) => Math.floor((m||0)/60) + ':' + String((m||0)%60).padStart(2,'0');
+const fmtTime = (iso, tz) => iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit', timeZone: tz || undefined }) : '';
+const fmtDateTime = (iso, tz) => iso ? new Date(iso).toLocaleString('ru-RU', { dateStyle:'short', timeStyle:'short', timeZone: tz || undefined }) : '';
+const msg = (el, text, kind) => { el.textContent = text; el.className = 'msg ' + (kind || ''); };
+// значения приходят от других людей (причина сотрудника, комментарий кадровика),
+// поэтому в разметку они попадают только экранированными
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function api(path, options = {}) {
+  const res = await fetch(cfg.baseUrl.replace(/\/$/, '') + path, {
+    ...options, headers: { 'X-Api-Token': cfg.token, ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error('Неверный токен');
+  return { status: res.status, body };
+}
+
+function table(el, columns, rows, empty) {
+  if (!rows.length) { el.innerHTML = '<tbody><tr><td class="muted">' + esc(empty) + '</td></tr></tbody>'; return; }
+  const cell = (c, r) => {
+    const value = c.render ? c.render(r) : (r[c.key] ?? '');
+    return c.raw ? value : esc(value);   // raw — только колонки, которые сами строят разметку
+  };
+  el.innerHTML = '<thead><tr>' + columns.map((c) => '<th>' + esc(c.title) + '</th>').join('') + '</tr></thead><tbody>'
+    + rows.map((r) => '<tr>' + columns.map((c) => '<td>' + cell(c, r) + '</td>').join('') + '</tr>').join('')
+    + '</tbody>';
+}
+
+function render() {
+  const tz = data.employee?.timezone;
+  const t = data.totals || {};
+  $('kpis').innerHTML = [
+    ['Отработано', fmtMin(t.worked_minutes) + ' ч'], ['План', fmtMin(t.scheduled_minutes) + ' ч'],
+    ['Сверхурочно', fmtMin(t.overtime_minutes) + ' ч'], ['Опозданий', (t.late_days ?? 0) + ' дн'],
+    ['Незакрытых смен', (t.days_incomplete ?? 0) + ' дн'], ['Отпуск и больничный', ((t.days_vacation ?? 0) + (t.days_sick_leave ?? 0)) + ' дн'],
+  ].map(([k, v]) => `<div class="kpi"><span class="muted">${k}</span><b>${v}</b></div>`).join('');
+
+  table($('days'), [
+    { title: 'Дата', key: 'work_date' },
+    { title: 'Статус', raw: true, render: (d) => { const [txt, cls] = STATUS[d.status] || [d.status, 't-off']; return `<span class="tag ${esc(cls)}">${esc(txt)}</span>`; } },
+    { title: 'Приход', render: (d) => fmtTime(d.first_in, tz) },
+    { title: 'Уход', render: (d) => fmtTime(d.last_out, tz) },
+    { title: 'Отработано', render: (d) => fmtMin(d.worked_minutes) },
+    { title: 'Зачтено', render: (d) => fmtMin(d.credited_minutes) },
+    { title: 'Опоздание, мин', key: 'late_minutes' },
+    { title: 'Сверхурочно, мин', key: 'overtime_minutes' },
+  ], (data.days || []).filter((d) => d.status !== 'day_off' || d.sessions > 0), 'Нет данных за период');
+
+  table($('corrections'), [
+    { title: 'Создан', render: (c) => fmtDateTime(c.created_at, tz) },
+    { title: 'Действие', render: (c) => ({ add: 'добавить', change: 'исправить', void: 'аннулировать' })[c.action] || c.action },
+    { title: 'Время', render: (c) => fmtDateTime(c.requested_time, tz) },
+    { title: 'Причина', key: 'reason' },
+    { title: 'Статус', render: (c) => REQ_STATUS[c.status] || c.status },
+    { title: 'Комментарий HR', render: (c) => c.review_comment || '' },
+  ], data.corrections || [], 'Запросов пока нет');
+
+  const pick = $('correctionForm').elements.event_id;
+  pick.innerHTML = (data.sessions || []).flatMap((s) => [
+    s.in_event_id ? `<option value="${esc(s.in_event_id)}">Приход ${esc(fmtDateTime(s.check_in, tz))}</option>` : '',
+    s.out_event_id ? `<option value="${esc(s.out_event_id)}">Уход ${esc(fmtDateTime(s.check_out, tz))}</option>` : '',
+  ]).join('') || '<option value="">нет отметок за период</option>';
+}
+
+async function loadRecords() {
+  const params = new URLSearchParams();
+  if ($('from').value) params.set('from', $('from').value);
+  if ($('to').value) params.set('to', $('to').value);
+  const { body } = await api('/webhook/timetrack/me/records?' + params);
+  data = body; render();
+}
+
+function syncFormVisibility() {
+  const action = $('correctionForm').elements.action.value;
+  $('eventPick').hidden = action === 'add';
+  $('typePick').hidden = action === 'void';
+  $('timePick').hidden = action === 'void';
+}
+
+$('loginBtn').onclick = async () => {
+  cfg = { token: $('token').value.trim(), baseUrl: ($('baseUrl').value.trim() || location.origin) };
+  try {
+    await loadRecords();
+    localStorage.setItem(LS, JSON.stringify(cfg));
+    $('app').hidden = false; $('authCard').hidden = true;
+  } catch (e) { msg($('authMsg'), e.message || 'Не удалось получить данные', 'err'); }
+};
+$('logout').onclick = () => { localStorage.removeItem(LS); location.reload(); };
+$('reload').onclick = () => loadRecords().catch((e) => alert(e.message));
+$('correctionForm').elements.action.onchange = syncFormVisibility;
+$('correctionForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target).entries());
+  const payload = { action: f.action, reason: f.reason };
+  if (f.action !== 'add') payload.event_id = Number(f.event_id);
+  if (f.action !== 'void') { payload.requested_type = f.requested_type; payload.requested_time = f.requested_time ? new Date(f.requested_time).toISOString() : null; }
+  try {
+    const { body } = await api('/webhook/timetrack/me/corrections', { method: 'POST', body: JSON.stringify(payload) });
+    if (body.ok) { msg($('corrMsg'), 'Запрос отправлен, отдел кадров его рассмотрит', 'ok'); e.target.reset(); syncFormVisibility(); await loadRecords(); }
+    else msg($('corrMsg'), body.message || ('Отклонено: ' + body.code), 'err');
+  } catch (err) { msg($('corrMsg'), err.message, 'err'); }
+};
+
+// период по умолчанию — последние 30 дней
+const today = new Date(); const monthAgo = new Date(Date.now() - 30 * 864e5);
+$('to').value = today.toISOString().slice(0, 10);
+$('from').value = monthAgo.toISOString().slice(0, 10);
+syncFormVisibility();
+if (cfg.token) { $('token').value = cfg.token; $('baseUrl').value = cfg.baseUrl || ''; $('loginBtn').click(); }
+</script>
+</body>
+</html>

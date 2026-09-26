@@ -1,0 +1,210 @@
+
+########  Демо-день: 2026-09-25 (время по Europe/Moscow)  ########
+
+=== Шаг 1. HR регистрирует сотрудника: POST /timetrack/employees/enroll (воркфлоу 01) ===
+--- карточка сотрудника (fn_upsert_employee) ---
+ employee_id |      full_name       | department |   timezone    |                                  work_schedule                                   
+-------------+----------------------+------------+---------------+----------------------------------------------------------------------------------
+ EMP-001     | Иванов Иван Иванович | Склад      | Europe/Moscow | {"end": "18:00", "days": [1, 2, 3, 4, 5], "start": "09:00", "break_minutes": 60}
+(1 row)
+
+--- согласие на обработку биометрии (fn_grant_consent) — без него регистрация лица невозможна ---
+              consent_id              
+--------------------------------------
+ 9f3c691f-1866-470c-9e90-998871bdc943
+(1 row)
+
+--- снимок ушёл в CompreFace (subject = EMP-001), вернулся image_id; в БД — только ссылка и хэш снимка ---
+            enrollment_id             
+--------------------------------------
+ fa54b10e-ce87-46d0-9f22-fe7c7db00e60
+(1 row)
+
+
+--- ещё два сотрудника: EMP-002 с согласием, EMP-003 без согласия (будет отмечаться вручную) ---
+ employee_id |       full_name        | department | consent 
+-------------+------------------------+------------+---------
+ EMP-001     | Иванов Иван Иванович   | Склад      | t
+ EMP-002     | Петрова Анна Сергеевна | Офис       | t
+ EMP-003     | Сидоров Пётр           | Склад      | f
+(3 rows)
+
+
+=== Шаг 2. Токены доступа (fn_issue_token): значение показывается один раз, в БД — только sha256 ===
+       client        |   role   |                              token                               
+---------------------+----------+------------------------------------------------------------------
+ Kiosk main entrance | device   | <значение токена показано один раз в терминале>
+ EMP-003 mobile      | employee | <значение токена показано один раз в терминале>
+ HR portal           | hr       | <значение токена показано один раз в терминале>
+(3 rows)
+
+--- как это хранится ---
+        name         |   role   | employee_id |      token_hash       
+---------------------+----------+-------------+-----------------------
+ Kiosk main entrance | device   | ∅           | 1e1deda2035cd22a4564…
+ EMP-003 mobile      | employee | EMP-003     | 731fa4b917dfc889c195…
+ HR portal           | hr       | ∅           | 4e535c0528867439f528…
+(3 rows)
+
+
+=== Шаг 3. 09:05 — Иванов встал перед терминалом: POST /timetrack/clock (воркфлоу 02) ===
+    n8n: токен терминала → снимок в CompreFace → subject EMP-001, similarity 0.987 ≥ 0.90 → fn_clock()
+ ok |   code   | event_type |    local_time    | duplicate |      full_name       
+----+----------+------------+------------------+-----------+----------------------
+ t  | recorded | check_in   | 2026-09-25 09:05 | f         | Иванов Иван Иванович
+(1 row)
+
+
+=== Шаг 4. Сеть моргнула — терминал повторил тот же запрос (тот же request_id) ===
+ ok |       code        | event_type |    local_time    | duplicate 
+----+-------------------+------------+------------------+-----------
+ t  | duplicate_request | check_in   | 2026-09-25 09:05 | t
+(1 row)
+
+
+=== Шаг 5. 09:06 — Иванов ещё раз посмотрел в камеру (новый снимок): антидребезг 120 с ===
+ ok |   code    | event_type |    local_time    | duplicate 
+----+-----------+------------+------------------+-----------
+ t  | debounced | check_in   | 2026-09-25 09:05 | t
+(1 row)
+
+
+=== Шаг 6. Обед 13:02 → 13:47 и уход 18:34: тип события определяется чередованием (auto) ===
+ step | ok |   code   | event_type |    local_time    
+------+----+----------+------------+------------------
+    1 | t  | recorded | check_out  | 2026-09-25 13:02
+    2 | t  | recorded | check_in   | 2026-09-25 13:47
+    3 | t  | recorded | check_out  | 2026-09-25 18:34
+(3 rows)
+
+
+=== Шаг 7. Посетитель попробовал отметиться: CompreFace не нашёл subject → 404 unknown_face, фото не сохраняется ===
+ audit_id 
+----------
+       11
+(1 row)
+
+
+=== Шаг 8. Сидоров (без согласия) подошёл к терминалу → отказ; отметился вручную личным токеном ===
+ ok |      code       | event_type |  full_name   
+----+-----------------+------------+--------------
+ f  | consent_missing | ∅          | Сидоров Пётр
+(1 row)
+
+--- POST /timetrack/clock/manual с личным токеном (source = manual, согласие не требуется) ---
+ ok |   code   | event_type |    local_time    
+----+----------+------------+------------------
+ t  | recorded | check_in   | 2026-09-25 08:03
+(1 row)
+
+    (вечером Сидоров забыл отметить уход — увидим это в отчёте)
+
+=== Шаг 9. Что легло в attendance_events (фото нет, есть хэш, схожесть, источник) ===
+ id | employee_id | event_type |    local_time    | source | device_id | confidence | request_id | status 
+----+-------------+------------+------------------+--------+-----------+------------+------------+--------
+  1 | EMP-001     | check_in   | 2026-09-25 09:05 | face   | kiosk-1   |     0.9870 | req-0905   | valid
+  2 | EMP-001     | check_out  | 2026-09-25 13:02 | face   | kiosk-1   |     0.9700 | req-1302   | valid
+  3 | EMP-001     | check_in   | 2026-09-25 13:47 | face   | kiosk-1   |     0.9700 | req-1347   | valid
+  4 | EMP-001     | check_out  | 2026-09-25 18:34 | face   | kiosk-1   |     0.9700 | req-1834   | valid
+  5 | EMP-003     | check_in   | 2026-09-25 08:03 | manual | ∅         |          ∅ | req-sid-2  | valid
+(5 rows)
+
+
+=== Шаг 10. HR импортирует календарь и отпуск: POST /timetrack/hr/calendar и /hr/absences (воркфлоу 06) ===
+--- Петрова в отпуске в демо-день: без этого день попал бы в табель как прогул ---
+ ok | code  |   type   | date_from  |  date_to   
+----+-------+----------+------------+------------
+ t  | saved | vacation | 2026-09-25 | 2026-09-29
+(1 row)
+
+--- производственный календарь: следующий день объявлен праздником, сотрудники переведены на него ---
+ calendar_code |    day     | day_type |           name            
+---------------+------------+----------+---------------------------
+ ru            | 2026-09-26 | holiday  | Демонстрационный праздник
+(1 row)
+
+ employee_id |       full_name        | calendar_code 
+-------------+------------------------+---------------
+ EMP-001     | Иванов Иван Иванович   | ru
+ EMP-002     | Петрова Анна Сергеевна | ru
+ EMP-003     | Сидоров Пётр           | ru
+(3 rows)
+
+
+=== Шаг 11. Дневная сводка (fn_daily_summary) — то, что показывает GET /timetrack/reports?type=standard ===
+ employee_id | day_type |   status   | absence_type |     first_in     |     last_out     | sessions | worked_minutes | break_minutes | scheduled_minutes | late_minutes | overtime_minutes | incomplete 
+-------------+----------+------------+--------------+------------------+------------------+----------+----------------+---------------+-------------------+--------------+------------------+------------
+ EMP-001     | workday  | late       | ∅            | 2026-09-25 09:05 | 2026-09-25 18:34 |        2 |            509 |            60 |               480 |            5 |               29 | f
+ EMP-002     | workday  | vacation   | vacation     | ∅                | ∅                |        0 |              0 |             0 |               480 |            0 |                0 | f
+ EMP-003     | workday  | incomplete | ∅            | 2026-09-25 08:03 | ∅                |        1 |              0 |             0 |               480 |            3 |                0 | t
+(3 rows)
+
+    EMP-001: 09:05–13:02 и 13:47–18:34 = 524 мин; перерыв 45 < 60 → доудержано 15 → 509 отработано,
+             опоздание 5 мин, сверхурочно 509 − 480 = 29.  EMP-002: отпуск, а не прогул.  EMP-003: незакрытая смена.
+
+=== Шаг 12. Сидоров просит добавить пропущенный уход в 17:30: POST /timetrack/me/corrections (воркфлоу 04) ===
+--- запрос в очереди HR: GET /timetrack/hr/corrections?status=pending ---
+                  id                  | employee_id | action | requested_type |  requested_time  | status  
+--------------------------------------+-------------+--------+----------------+------------------+---------
+ 46bf7c8c-2f84-47a6-a116-a0aebbe3bbaa | EMP-003     | add    | check_out      | 2026-09-25 17:30 | pending
+(1 row)
+
+--- HR одобряет: POST /timetrack/hr/corrections/review (fn_review_correction) ---
+ ok |   code   | new_event_id |   source   | reviewed_by 
+----+----------+--------------+------------+-------------
+ t  | approved | 6            | correction | hr.manager
+(1 row)
+
+--- сводка EMP-003 после корректировки ---
+ status |     first_in     |     last_out     | worked_minutes | late_minutes | incomplete 
+--------+------------------+------------------+----------------+--------------+------------
+ late   | 2026-09-25 08:03 | 2026-09-25 17:30 |            507 |            3 | f
+(1 row)
+
+
+=== Шаг 13. Итоги дня для табеля (fn_timesheet → totals) ===
+ employee_id |       full_name        |                                                                                                                                                                            totals                                                                                                                                                                            
+-------------+------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ EMP-001     | Иванов Иван Иванович   | {"late_days": 1, "days_absent": 0, "days_holiday": 0, "days_present": 1, "late_minutes": 5, "days_vacation": 0, "scheduled_days": 1, "worked_minutes": 509, "days_incomplete": 0, "days_sick_leave": 0, "credited_minutes": 0, "overtime_minutes": 29, "scheduled_minutes": 480, "days_business_trip": 0, "days_other_absence": 0, "early_leave_minutes": 0}
+ EMP-002     | Петрова Анна Сергеевна | {"late_days": 0, "days_absent": 0, "days_holiday": 0, "days_present": 0, "late_minutes": 0, "days_vacation": 1, "scheduled_days": 1, "worked_minutes": 0, "days_incomplete": 0, "days_sick_leave": 0, "credited_minutes": 0, "overtime_minutes": 0, "scheduled_minutes": 480, "days_business_trip": 0, "days_other_absence": 0, "early_leave_minutes": 0}
+ EMP-003     | Сидоров Пётр           | {"late_days": 1, "days_absent": 0, "days_holiday": 0, "days_present": 1, "late_minutes": 3, "days_vacation": 0, "scheduled_days": 1, "worked_minutes": 507, "days_incomplete": 0, "days_sick_leave": 0, "credited_minutes": 0, "overtime_minutes": 27, "scheduled_minutes": 480, "days_business_trip": 0, "days_other_absence": 0, "early_leave_minutes": 0}
+(3 rows)
+
+
+=== Шаг 14. Outbox для HR-системы: что уйдёт воркфлоу 06 (POST на hrSystemUrl) ===
+ id |     event_kind     | entity_id | status  |                                                                                   payload                                                                                    
+----+--------------------+-----------+---------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  1 | employee.upserted  | EMP-001   | pending | {"status": "active", "employee_id": "EMP-001", "hr_external_id": "HR-1001"}
+  2 | employee.upserted  | EMP-002   | pending | {"status": "active", "employee_id": "EMP-002", "hr_external_id": "HR-1002"}
+  3 | employee.upserted  | EMP-003   | pending | {"status": "active", "employee_id": "EMP-003", "hr_external_id": "HR-1003"}
+  4 | attendance.created | 1         | pending | {"source": "face", "status": "valid", "event_id": 1, "event_type": "check_in", "employee_id": "EMP-001", "occurred_at": "2026-09-25T06:05:00+00:00", "superseded_by": null}
+  5 | attendance.created | 2         | pending | {"source": "face", "status": "valid", "event_id": 2, "event_type": "check_out", "employee_id": "EMP-001", "occurred_at": "2026-09-25T10:02:00+00:00", "superseded_by": null}
+  6 | attendance.created | 3         | pending | {"source": "face", "status": "valid", "event_id": 3, "event_type": "check_in", "employee_id": "EMP-001", "occurred_at": "2026-09-25T10:47:00+00:00", "superseded_by": null}
+(6 rows)
+
+
+=== Шаг 15. Журнал аудита: кто и что делал ===
+       when       |        actor        | actor_role |        action        |    entity_type     |              entity_id               
+------------------+---------------------+------------+----------------------+--------------------+--------------------------------------
+ 2026-09-26 14:57 | hr.portal           | hr         | employee.upserted    | employee           | EMP-001
+ 2026-09-26 14:57 | hr.portal           | hr         | consent.granted      | employee           | EMP-001
+ 2026-09-26 14:57 | hr.portal           | hr         | biometrics.enrolled  | employee           | EMP-001
+ 2026-09-26 14:57 | hr.portal           | hr         | employee.upserted    | employee           | EMP-002
+ 2026-09-26 14:57 | hr.portal           | hr         | employee.upserted    | employee           | EMP-003
+ 2026-09-26 14:57 | hr.portal           | hr         | consent.granted      | employee           | EMP-002
+ 2026-09-26 14:57 | Kiosk main entrance | device     | attendance.check_in  | attendance_event   | 1
+ 2026-09-26 14:57 | Kiosk main entrance | device     | attendance.check_out | attendance_event   | 2
+ 2026-09-26 14:57 | Kiosk main entrance | device     | attendance.check_in  | attendance_event   | 3
+ 2026-09-26 14:57 | Kiosk main entrance | device     | attendance.check_out | attendance_event   | 4
+ 2026-09-26 14:57 | Kiosk main entrance | device     | recognition.failed   | device             | kiosk-1
+ 2026-09-26 14:57 | ∅                   | device     | attendance.rejected  | employee           | EMP-003
+ 2026-09-26 14:57 | EMP-003 mobile      | employee   | attendance.check_in  | attendance_event   | 5
+ 2026-09-26 14:57 | hr.portal           | hr         | absence.upserted     | absence            | 7276ad6e-899b-4c28-a5e5-fde6ec9a1810
+ 2026-09-26 14:57 | hr.portal           | hr         | calendar.upserted    | calendar_day       | ru:2026-09-26
+ 2026-09-26 14:57 | hr.portal           | hr         | employee.upserted    | employee           | EMP-001
+ 2026-09-26 14:57 | hr.portal           | hr         | employee.upserted    | employee           | EMP-002
+ 2026-09-26 14:57 | hr.portal           | hr         | employee.upserted    | employee           | EMP-003
+ 2026-09-26 14:57 | EMP-003 mobile      | employee   | correction.requested | correction_request | 46bf7c8c-2f84-47a6-a116-a0aebbe3bbaa
+ 2026-09-26 14:57 | hr.manager          | hr         | correction.approved  | correction_request | 46bf7c8c-2f84-47a6-a116-a0aebbe3bbaa
+(20 rows)
+

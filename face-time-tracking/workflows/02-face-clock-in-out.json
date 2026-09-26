@@ -1,0 +1,977 @@
+{
+  "id": "blxUYYP0ppRvQf07",
+  "name": "Timetrack 02 — Face Clock In/Out",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Отметка прихода/ухода по лицу\n`POST /webhook/timetrack/clock` — заголовок `X-Api-Token` (токен терминала), тело: multipart `image` (или JSON `image_base64`), опционально `event_type` (check_in|check_out|auto), `request_id`, `device_id`, `location`, `captured_at`, `employee_id`.\n\nПоток: аутентификация терминала → подготовка снимка → распознавание (CompreFace) → проверка порога схожести → `timetrack.fn_clock()` (согласие, антидребезг, чередование приход/уход, идемпотентность) → ответ.\n\nФото не сохраняется: в БД пишется только sha256-хэш снимка и оценка схожести.",
+        "height": 240,
+        "width": 1500,
+        "color": 4
+      },
+      "id": "fb4c6509-f516-543f-8767-70a1a7eecf90",
+      "name": "Sticky Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Ручная отметка (без биометрии)\n`POST /webhook/timetrack/clock/manual` — заголовок `X-Api-Token` (личный токен сотрудника), тело: `event_type`, `request_id`.\nАльтернатива для сотрудников, не давших согласие на биометрию, и на случай сбоя терминала. HR-токен может отмечать другого сотрудника, передав `employee_id`.",
+        "height": 160,
+        "width": 1200,
+        "color": 5
+      },
+      "id": "37acde69-01f2-5473-b9b5-9b6843c21d29",
+      "name": "Sticky Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/clock",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "66b7ba7d-6d82-56cb-b53e-d226b8f741aa",
+      "name": "Clock Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        300
+      ],
+      "webhookId": "25260074-c4fd-55ad-8e66-f18497f4c1c5"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9efbbb4a-70ba-5c95-bf42-6ae2f59b8276",
+              "name": "faceApiUrl",
+              "value": "http://compreface-api:8080",
+              "type": "string"
+            },
+            {
+              "id": "9b411171-1b6c-522c-b2c0-236d28c3e551",
+              "name": "similarityThreshold",
+              "value": 0.9,
+              "type": "number"
+            },
+            {
+              "id": "fa695255-a5ea-5238-a863-f442c9d39cc5",
+              "name": "detProbThreshold",
+              "value": 0.85,
+              "type": "number"
+            },
+            {
+              "id": "eaf129a8-d3bd-534a-a4bf-153a8d48a418",
+              "name": "debounceSeconds",
+              "value": 120,
+              "type": "number"
+            },
+            {
+              "id": "acc634b8-1ad0-5f7c-a1b1-17da45afb560",
+              "name": "maxSessionHours",
+              "value": 16,
+              "type": "number"
+            },
+            {
+              "id": "e1d02d36-9ec9-56e1-94a3-a8f53e8b7225",
+              "name": "allowMultipleFaces",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "d0debfcc-852a-55d6-84d9-39386a300830",
+              "name": "requireConsent",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "7caf7b25-de78-54e1-a0f7-143239019028",
+              "name": "maxBackdateHours",
+              "value": 24,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "e10dba50-cad9-5196-bd20-30d1a5502404",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Настройки: адрес CompreFace, пороги, антидребезг. Меняйте здесь.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Clock Webhook').first().json.headers['x-api-token'] || ($('Clock Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "53c6a9f0-7ad3-544a-b249-ee60f3dabb19",
+      "name": "Authenticate Client",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "844e8b0b-d226-57f9-9ab1-9381c64f333a",
+              "leftValue": "={{ ['device', 'system', 'hr'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4dc9dc36-b967-590f-bc2e-9dbd67efab0e",
+      "name": "Is Authenticated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "22f4eb83-83c7-5dfe-b3e2-d45d79646ada",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Собирает запрос терминала: метаданные + изображение в binary-поле \"image\".\n// Фото НЕ попадает в JSON (кроме случая, когда клиент прислал image_base64) —\n// рекомендуемый способ загрузки: multipart/form-data, поле \"image\".\nconst hook = $('Clock Webhook').first();\nconst auth = $input.first().json;\nconst body = hook.json.body || {};\nconst headers = hook.json.headers || {};\nconst problems = [];\n\nconst binary = hook.binary || {};\nlet image = binary.image || Object.values(binary)[0];\nif (!image && typeof body.image_base64 === 'string' && body.image_base64.length > 0) {\n  const b64 = body.image_base64.replace(/^data:[^;]+;base64,/, '');\n  const buffer = Buffer.from(b64, 'base64');\n  if (buffer.length > 0) {\n    image = await this.helpers.prepareBinaryData(buffer, 'capture.jpg', body.image_mime || 'image/jpeg');\n  }\n}\nif (!image) problems.push('image_missing');\nif (image && image.mimeType && !/^image\\//.test(image.mimeType)) problems.push('not_an_image');\n\nconst eventType = ['check_in', 'check_out', 'auto'].includes(body.event_type) ? body.event_type : 'auto';\nconst capturedAt = body.captured_at && !Number.isNaN(Date.parse(body.captured_at))\n  ? new Date(body.captured_at).toISOString()\n  : null;\nconst liveness = Number(body.liveness_score);\n\nreturn [{\n  json: {\n    ok: problems.length === 0,\n    code: problems.length ? 'bad_request' : null,\n    http_status: problems.length ? 400 : 200,\n    message: problems.length ? 'Некорректный запрос: ' + problems.join(', ') : '',\n    problems,\n    client_id: auth.client_id,\n    client_name: auth.client_name,\n    client_role: auth.role,\n    device_id: body.device_id || auth.client_name || null,\n    location: body.location || auth.location || null,\n    event_type: eventType,\n    employee_id_hint: body.employee_id ? String(body.employee_id) : null,\n    request_id: body.request_id || headers['idempotency-key'] || null,\n    captured_at: capturedAt,\n    liveness_score: Number.isFinite(liveness) ? liveness : null,\n    client_ip: headers['x-forwarded-for'] || headers['x-real-ip'] || null,\n  },\n  binary: image ? { image } : undefined,\n}];\n"
+      },
+      "id": "3eb1f2a2-8149-5f91-9efe-cd2ec9267a13",
+      "name": "Prepare Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "83186b17-f78a-58b5-829b-869c183003b0",
+      "name": "Has Image?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $json.code, message: $json.message, problems: $json.problems }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "3318c5a5-38bc-53ca-b738-ae8d75b82c9d",
+      "name": "Respond Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.faceApiUrl }}/api/v1/recognition/recognize",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "1"
+            },
+            {
+              "name": "prediction_count",
+              "value": "1"
+            },
+            {
+              "name": "det_prob_threshold",
+              "value": "={{ $('Config').first().json.detProbThreshold }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "image"
+            }
+          ]
+        }
+      },
+      "id": "d594a184-b153-5d24-a828-0ae5e61ff212",
+      "name": "Recognize Face",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "timetrack-compreface-key",
+          "name": "CompreFace Recognition API Key"
+        }
+      },
+      "notes": "CompreFace Recognition API. Ключ — в credential \"CompreFace Recognition API Key\" (заголовок x-api-key).",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Разбирает ответ CompreFace /api/v1/recognition/recognize и принимает решение.\nconst cfg = $('Config').first().json;\nconst req = $('Prepare Request').first();\nconst resp = $input.first().json;\nconst status = Number(resp.statusCode ?? 0);\nconst body = resp.body ?? {};\nconst out = {\n  ...req.json,\n  matched: false, code: null, http_status: 200, message: '',\n  employee_id: null, similarity: null, face_probability: null, faces_detected: 0,\n};\n\nif (resp.error || status === 0 || status >= 500) {\n  out.code = 'face_service_unavailable'; out.http_status = 502;\n  out.message = 'Сервис распознавания недоступен' + (status ? ' (HTTP ' + status + ')' : '');\n} else if (status === 400 && (body.code === 28 || /no face/i.test(body.message || ''))) {\n  out.code = 'no_face'; out.http_status = 422; out.message = 'На снимке не найдено лицо';\n} else if (status === 401 || status === 403) {\n  out.code = 'face_service_auth'; out.http_status = 502; out.message = 'Неверный API-ключ сервиса распознавания';\n} else if (status !== 200) {\n  out.code = 'face_service_error'; out.http_status = 502; out.message = body.message || ('HTTP ' + status);\n} else {\n  const results = Array.isArray(body.result) ? body.result : [];\n  out.faces_detected = results.length;\n  if (results.length === 0) {\n    out.code = 'no_face'; out.http_status = 422; out.message = 'На снимке не найдено лицо';\n  } else if (results.length > 1 && !cfg.allowMultipleFaces) {\n    out.code = 'multiple_faces'; out.http_status = 422; out.message = 'На снимке несколько лиц';\n  } else {\n    // берём лицо с максимальной вероятностью детекции\n    const best = results.slice().sort((a, b) => (b.box?.probability ?? 0) - (a.box?.probability ?? 0))[0];\n    out.face_probability = best.box?.probability ?? null;\n    const subject = (best.subjects || [])[0];\n    if (!subject) {\n      out.code = 'unknown_face'; out.http_status = 404; out.message = 'Лицо не зарегистрировано';\n    } else if (Number(subject.similarity) < Number(cfg.similarityThreshold)) {\n      out.code = 'low_similarity'; out.http_status = 404; out.similarity = Number(subject.similarity);\n      out.message = 'Недостаточная схожесть лица';\n    } else {\n      out.matched = true; out.code = 'matched';\n      out.employee_id = String(subject.subject);\n      out.similarity = Number(subject.similarity);\n    }\n  }\n}\n\n// защита от подмены: терминал передал employee_id, а лицо принадлежит другому\nif (out.matched && out.employee_id_hint && out.employee_id_hint !== out.employee_id) {\n  out.matched = false; out.code = 'employee_mismatch'; out.http_status = 403;\n  out.message = 'Лицо не соответствует указанному сотруднику';\n}\n\nreturn [{ json: out, binary: req.binary }];\n"
+      },
+      "id": "145a41bf-0161-5c56-b3cd-a057a9dcbac1",
+      "name": "Interpret Recognition",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "binaryData": true,
+        "binaryPropertyName": "image",
+        "dataPropertyName": "image_hash",
+        "encoding": "hex"
+      },
+      "id": "ee93e922-d9aa-53a9-b6cc-bb84d518cb4a",
+      "name": "Hash Image",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "df080ad9-0a20-59c3-89f6-fce6e9e241aa",
+              "leftValue": "={{ $json.matched === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a40a837-0330-5cf2-8693-0f60531fbb06",
+      "name": "Face Matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ok, code, event_id, event_type, occurred_at, duplicate, employee_id, full_name, timezone\n  FROM timetrack.fn_clock($1, $2, 'face', $3, $4, $5::numeric, $6::numeric, $7, $8,\n                          $9::timestamptz, $10::jsonb, $11, $12::int, $13::int, $14::boolean, $15::int)",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, $json.event_type, $json.device_id ?? null, $json.location ?? null, $json.similarity ?? null, $json.liveness_score ?? null, $json.image_hash ?? null, $json.request_id ?? null, $json.captured_at ?? null, ({ face_probability: $json.face_probability ?? null, faces_detected: $json.faces_detected ?? 0, client_ip: $json.client_ip ?? null }), $json.client_name ?? null, $('Config').first().json.debounceSeconds, $('Config').first().json.maxSessionHours, $('Config').first().json.requireConsent, $('Config').first().json.maxBackdateHours ] }}"
+        }
+      },
+      "id": "1e36f742-ea10-53b2-ad34-f799520327ab",
+      "name": "Record Attendance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2960,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "timetrack.fn_clock(): согласие, антидребезг, чередование приход/уход, идемпотентность, аудит.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT timetrack.fn_audit($1, 'device', 'recognition.failed', 'device', $2, $3::jsonb, $4) AS audit_id",
+        "options": {
+          "queryReplacement": "={{ [ $json.client_name ?? null, $json.device_id ?? null, ({ code: $json.code, similarity: $json.similarity ?? null, faces_detected: $json.faces_detected ?? 0, image_hash: $json.image_hash ?? null, request_id: $json.request_id ?? null, employee_id_hint: $json.employee_id_hint ?? null }), $json.client_ip ?? null ] }}"
+        }
+      },
+      "id": "9128c5e4-a608-58ba-b2f3-308af71ae20c",
+      "name": "Log Failed Recognition",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2960,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Неуспешные попытки пишутся в audit_log без фото: код, схожесть, хэш снимка.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $('Interpret Recognition').first().json.code, message: $('Interpret Recognition').first().json.message, faces_detected: $('Interpret Recognition').first().json.faces_detected, request_id: $('Interpret Recognition').first().json.request_id }) }}",
+        "options": {
+          "responseCode": "={{ $('Interpret Recognition').first().json.http_status }}"
+        }
+      },
+      "id": "1d6257e5-d287-56b3-893e-e9e72d7c48e0",
+      "name": "Respond Recognition Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e3e090c8-61bc-53c2-ab6a-02e99bbd8e1b",
+      "name": "Clock Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, code: $json.code, duplicate: $json.duplicate, employee_id: $json.employee_id, full_name: $json.full_name, event_type: $json.event_type, occurred_at: $json.occurred_at, event_id: $json.event_id, similarity: $('Interpret Recognition').first().json.similarity }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "d88bebe5-62c1-524c-b9a1-a59de1a7db9c",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $json.code, employee_id: $json.employee_id, message: ({ consent_missing: 'Нет действующего согласия на обработку биометрии', employee_inactive: 'Сотрудник неактивен', employee_not_found: 'Сотрудник не найден' })[$json.code] || $json.code }) }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "e7a359db-c796-583c-ae31-ebbbb7b43ff4",
+      "name": "Respond Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3520,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/clock/manual",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "5a1f7c69-e1e8-5cd0-b7a7-eff7691e8514",
+      "name": "Manual Clock Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        940
+      ],
+      "webhookId": "4446ece4-a0fa-5989-9c9a-35c200db54bf"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Manual Clock Webhook').first().json.headers['x-api-token'] || ($('Manual Clock Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "ed4fb7d9-94b5-526a-bfae-f4462979d96c",
+      "name": "Authenticate Employee",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        940
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "74bf7a55-7c98-5838-b0be-61563b6f8f27",
+              "leftValue": "={{ $json.role === 'employee' || (['hr', 'system'].includes($json.role ?? '') && !!$('Manual Clock Webhook').first().json.body?.employee_id) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4c28ed43-2b23-5fb5-a534-cf12e52f102b",
+      "name": "Is Employee Token?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "ddc4e998-a051-5023-9233-21989031746e",
+      "name": "Respond 401 (manual)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ok, code, event_id, event_type, occurred_at, duplicate, employee_id, full_name, timezone\n  FROM timetrack.fn_clock($1, $2, 'manual', NULL, $3, NULL, NULL, NULL, $4, NULL, $5::jsonb, $6, $7::int, $8::int, false)",
+        "options": {
+          "queryReplacement": "={{ [ ($json.role === 'employee' ? $json.employee_id : String($('Manual Clock Webhook').first().json.body.employee_id)), $('Manual Clock Webhook').first().json.body?.event_type ?? 'auto', $('Manual Clock Webhook').first().json.body?.location ?? null, $('Manual Clock Webhook').first().json.body?.request_id ?? null, ({ note: $('Manual Clock Webhook').first().json.body?.note ?? null, via: 'manual_api', by_role: $json.role }), $json.client_name ?? null, 60, 16 ] }}"
+        }
+      },
+      "id": "0c60bf8f-3091-5686-b929-64e600930251",
+      "name": "Record Manual Attendance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1000,
+        940
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0a373c94-3d3a-58a5-bea6-89b5b4427dc5",
+      "name": "Manual Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, code: $json.code, duplicate: $json.duplicate, employee_id: $json.employee_id, full_name: $json.full_name, event_type: $json.event_type, occurred_at: $json.occurred_at, event_id: $json.event_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e7166871-24b3-5336-9ca0-3177339d83ad",
+      "name": "Respond Manual Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $json.code, employee_id: $json.employee_id }) }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "6f8195f3-17bf-5304-8e3f-de32f1c92332",
+      "name": "Respond Manual Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        1140
+      ]
+    }
+  ],
+  "connections": {
+    "Clock Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Authenticate Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate Client": {
+      "main": [
+        [
+          {
+            "node": "Is Authenticated?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Authenticated?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Request": {
+      "main": [
+        [
+          {
+            "node": "Has Image?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Image?": {
+      "main": [
+        [
+          {
+            "node": "Recognize Face",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recognize Face": {
+      "main": [
+        [
+          {
+            "node": "Interpret Recognition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpret Recognition": {
+      "main": [
+        [
+          {
+            "node": "Hash Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Image": {
+      "main": [
+        [
+          {
+            "node": "Face Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Face Matched?": {
+      "main": [
+        [
+          {
+            "node": "Record Attendance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Failed Recognition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Failed Recognition": {
+      "main": [
+        [
+          {
+            "node": "Respond Recognition Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Attendance": {
+      "main": [
+        [
+          {
+            "node": "Clock Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clock Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Clock Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate Employee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate Employee": {
+      "main": [
+        [
+          {
+            "node": "Is Employee Token?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Employee Token?": {
+      "main": [
+        [
+          {
+            "node": "Record Manual Attendance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (manual)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Manual Attendance": {
+      "main": [
+        [
+          {
+            "node": "Manual Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Respond Manual Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Manual Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Отметка прихода/ухода по фото (CompreFace) и ручная отметка по личному токену",
+    "tags": [
+      "timetrack"
+    ]
+  },
+  "active": false
+}
