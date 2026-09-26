@@ -38,7 +38,7 @@ export function build() {
 			html:
 				"=<p>Воркфлоу <b>{{ $('Error Trigger').first().json.workflow?.name ?? 'unknown' }}</b> завершился с ошибкой.</p>" +
 				"<ul><li>Узел: {{ $('Error Trigger').first().json.execution?.lastNodeExecuted ?? '—' }}</li>" +
-				"<li>Ошибка: {{ $('Error Trigger').first().json.execution?.error?.message ?? '—' }}</li>" +
+				`<li>Ошибка: {{ String($('Error Trigger').first().json.execution?.error?.message ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li>` +
 				"<li>Выполнение: <a href=\"{{ $('Error Trigger').first().json.execution?.url ?? '#' }}\">{{ $('Error Trigger').first().json.execution?.id ?? '—' }}</a></li></ul>",
 			onError: 'stopWorkflow',
 		}),

@@ -59,7 +59,7 @@
 <div class="screen" id="main">
   <video id="video" autoplay playsinline muted></video>
   <button id="capture">Отметиться</button>
-  <p class="hint" id="hint">Встаньте лицом к камере и нажмите кнопку. Снимок используется только для распознавания и нигде не сохраняется.</p>
+  <p class="hint" id="hint">Встаньте лицом к камере и нажмите кнопку. Снимок используется только для распознавания: он не сохраняется ни в системе учёта, ни в сервисе распознавания. Если связи нет, снимок временно остаётся на этом терминале до отправки.</p>
   <button class="link" id="openSettings">Настройки терминала</button>
 </div>
 
@@ -186,8 +186,10 @@ async function send(item) {
   if (item.device_id) form.append('device_id', item.device_id);
   if (item.location) form.append('location', item.location);
   if (item.event_type && item.event_type !== 'auto') form.append('event_type', item.event_type);
-  const res = await fetch(item.baseUrl.replace(/\/$/, '') + '/webhook/timetrack/clock', {
-    method: 'POST', headers: { 'X-Api-Token': item.token }, body: form,
+  // адрес и токен берутся из настроек в момент отправки, а не из записи очереди:
+  // копия токена не должна лежать на диске терминала рядом с каждым снимком
+  const res = await fetch(settings.baseUrl.replace(/\/$/, '') + '/webhook/timetrack/clock', {
+    method: 'POST', headers: { 'X-Api-Token': settings.token }, body: form,
   });
   const data = await res.json().catch(() => ({ ok: false, code: 'bad_response' }));
   return { status: res.status, data };
@@ -203,7 +205,7 @@ async function capture() {
     const item = {
       blob, request_id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
       captured_at: new Date().toISOString(), device_id: settings.deviceId, location: settings.location,
-      event_type: settings.eventType, baseUrl: settings.baseUrl, token: settings.token,
+      event_type: settings.eventType,
     };
     try {
       const { status, data } = await send(item);
@@ -230,7 +232,8 @@ const blobToBase64 = (blob) => new Promise((resolve) => {
 const base64ToBlob = (b64) => fetch('data:image/jpeg;base64,' + b64).then((r) => r.blob());
 
 async function enqueue(item) {
-  // снимок хранится только здесь и только до успешной отправки
+  // Снимок временно попадает в localStorage этого терминала и удаляется сразу
+  // после ответа сервера. Токен сюда не кладётся — он берётся из настроек при отправке.
   queue.push({ ...item, blob: undefined, image: await blobToBase64(item.blob) });
   if (queue.length > 50) queue = queue.slice(-50);
   save(LS_QUEUE, queue); renderQueue();

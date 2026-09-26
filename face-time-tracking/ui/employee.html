@@ -111,6 +111,9 @@ const fmtMin = (m) => Math.floor((m||0)/60) + ':' + String((m||0)%60).padStart(2
 const fmtTime = (iso, tz) => iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit', timeZone: tz || undefined }) : '';
 const fmtDateTime = (iso, tz) => iso ? new Date(iso).toLocaleString('ru-RU', { dateStyle:'short', timeStyle:'short', timeZone: tz || undefined }) : '';
 const msg = (el, text, kind) => { el.textContent = text; el.className = 'msg ' + (kind || ''); };
+// значения приходят от других людей (причина сотрудника, комментарий кадровика),
+// поэтому в разметку они попадают только экранированными
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function api(path, options = {}) {
   const res = await fetch(cfg.baseUrl.replace(/\/$/, '') + path, {
@@ -122,9 +125,13 @@ async function api(path, options = {}) {
 }
 
 function table(el, columns, rows, empty) {
-  if (!rows.length) { el.innerHTML = '<tbody><tr><td class="muted">' + empty + '</td></tr></tbody>'; return; }
-  el.innerHTML = '<thead><tr>' + columns.map((c) => '<th>' + c.title + '</th>').join('') + '</tr></thead><tbody>'
-    + rows.map((r) => '<tr>' + columns.map((c) => '<td>' + (c.render ? c.render(r) : (r[c.key] ?? '')) + '</td>').join('') + '</tr>').join('')
+  if (!rows.length) { el.innerHTML = '<tbody><tr><td class="muted">' + esc(empty) + '</td></tr></tbody>'; return; }
+  const cell = (c, r) => {
+    const value = c.render ? c.render(r) : (r[c.key] ?? '');
+    return c.raw ? value : esc(value);   // raw — только колонки, которые сами строят разметку
+  };
+  el.innerHTML = '<thead><tr>' + columns.map((c) => '<th>' + esc(c.title) + '</th>').join('') + '</tr></thead><tbody>'
+    + rows.map((r) => '<tr>' + columns.map((c) => '<td>' + cell(c, r) + '</td>').join('') + '</tr>').join('')
     + '</tbody>';
 }
 
@@ -139,7 +146,7 @@ function render() {
 
   table($('days'), [
     { title: 'Дата', key: 'work_date' },
-    { title: 'Статус', render: (d) => { const [txt, cls] = STATUS[d.status] || [d.status, 't-off']; return `<span class="tag ${cls}">${txt}</span>`; } },
+    { title: 'Статус', raw: true, render: (d) => { const [txt, cls] = STATUS[d.status] || [d.status, 't-off']; return `<span class="tag ${esc(cls)}">${esc(txt)}</span>`; } },
     { title: 'Приход', render: (d) => fmtTime(d.first_in, tz) },
     { title: 'Уход', render: (d) => fmtTime(d.last_out, tz) },
     { title: 'Отработано', render: (d) => fmtMin(d.worked_minutes) },
@@ -159,8 +166,8 @@ function render() {
 
   const pick = $('correctionForm').elements.event_id;
   pick.innerHTML = (data.sessions || []).flatMap((s) => [
-    s.in_event_id ? `<option value="${s.in_event_id}">Приход ${fmtDateTime(s.check_in, tz)}</option>` : '',
-    s.out_event_id ? `<option value="${s.out_event_id}">Уход ${fmtDateTime(s.check_out, tz)}</option>` : '',
+    s.in_event_id ? `<option value="${esc(s.in_event_id)}">Приход ${esc(fmtDateTime(s.check_in, tz))}</option>` : '',
+    s.out_event_id ? `<option value="${esc(s.out_event_id)}">Уход ${esc(fmtDateTime(s.check_out, tz))}</option>` : '',
   ]).join('') || '<option value="">нет отметок за период</option>';
 }
 

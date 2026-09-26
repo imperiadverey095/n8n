@@ -7,8 +7,8 @@
    n8n Prepare Request → {"ok":true,"event_type":"auto","request_id":"sim-0001","device_id":"kiosk-1","binary":["image"]}
    n8n Recognize Face → CompreFace POST /api/v1/recognition/recognize  ⇒ HTTP 200 {"result":[{"box":{"probability":0.99971,"x_min":312,"y_min":140,"x_max":540,"y_max":410},"subjects":[{"subject":"EMP-002","similarity":0.98213}]}]}
    n8n Interpret Recognition → {"matched":true,"code":"matched","similarity":0.98213,"http_status":200}
-   n8n Record Attendance → fn_clock → {"ok":true,"code":"recorded","event_id":7,"event_type":"check_in","occurred_at":"2026-09-22T10:39:57.705426+00:00","duplicate":false,"employee_id":"EMP-002","full_name":"Петрова Анна Сергеевна","timezone":"Europe/Moscow"}
-← Ответ терминалу: HTTP 200 {"ok":true,"code":"recorded","duplicate":false,"employee_id":"EMP-002","full_name":"Петрова Анна Сергеевна","event_type":"check_in","occurred_at":"2026-09-22T10:39:57.705426+00:00","event_id":7,"similarity":0.98213}
+   n8n Record Attendance → fn_clock → {"ok":true,"code":"recorded","event_id":7,"event_type":"check_in","occurred_at":"2026-09-26T11:57:48.531369+00:00","duplicate":false,"employee_id":"EMP-002","full_name":"Петрова Анна Сергеевна","timezone":"Europe/Moscow"}
+← Ответ терминалу: HTTP 200 {"ok":true,"code":"recorded","duplicate":false,"employee_id":"EMP-002","full_name":"Петрова Анна Сергеевна","event_type":"check_in","occurred_at":"2026-09-26T11:57:48.531369+00:00","event_id":7,"similarity":0.98213}
 
 ==============================================================================
 Сценарий B. Похожее, но чужое лицо: similarity 0.71 < порога 0.90 — отказ, аудит без фото

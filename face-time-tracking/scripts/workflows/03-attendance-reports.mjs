@@ -25,9 +25,11 @@ if ((Date.parse(to) - Date.parse(from)) / 86400000 > cfg.maxPeriodDays) problems
 let employeeId = q.employee_id ? String(q.employee_id) : null;
 let department = q.department ? String(q.department) : null;
 if (auth.role === 'employee') {
-  // сотрудник видит только собственный табель
+  // сотрудник видит только собственный табель; пустой employee_id недопустим,
+  // иначе запрос вернул бы данные всех сотрудников
   employeeId = auth.employee_id;
   department = null;
+  if (!employeeId) problems.push('employee_scope_missing');
 }
 if (employeeId && !/^[A-Za-z0-9._-]{1,64}$/.test(employeeId)) problems.push('employee_id_invalid');
 
@@ -76,6 +78,10 @@ const ABSENCE_RU = {
   remote: 'удалённо', unpaid_leave: 'отпуск без сохранения', other: 'прочее',
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+// Excel и LibreOffice выполняют значение, начинающееся с = + - @, как формулу,
+// а в отчёт попадает свободный текст сотрудника (причина корректировки)
+const csvSafe = (v) => (typeof v === 'string' && /^[=+\\-@\\t\\r]/.test(v) ? "'" + v : v);
+const csvSafeRow = (row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, csvSafe(v)]));
 
 function dayRows(ts) {
   const tz = ts.employee.timezone;
@@ -260,7 +266,7 @@ if (p.format === 'csv') {
       .concat(absenceRows(ts).map((r) => ({ section: 'absence', ...r })))
       .concat(correctionRows(ts).map((r) => ({ section: 'correction', ...r }))));
   if (!rows.length) rows = [{ info: 'Нет данных за период ' + period }];
-  return rows.map((r) => ({ json: r }));
+  return rows.map((r) => ({ json: csvSafeRow(r) }));
 }
 
 // ---------- HTML ----------

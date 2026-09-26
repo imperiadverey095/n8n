@@ -21,7 +21,7 @@ const cfg = $('Config (monthly)').first().json;
 const timesheets = $input.all().map((i) => i.json).filter((r) => r && r.employee);
 const label = period.from + ' — ' + period.to;
 
-let rows = timesheets.flatMap(dayRows);
+let rows = timesheets.flatMap(dayRows).map(csvSafeRow);
 if (!rows.length) rows = [{ info: 'Нет данных за период ' + label }];
 
 const sections = [

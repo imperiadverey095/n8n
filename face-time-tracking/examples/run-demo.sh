@@ -14,7 +14,10 @@ psql "$ADMIN_URL" -X -q -c "DROP DATABASE IF EXISTS ${DB}" -c "CREATE DATABASE $
 DEMO_URL="${ADMIN_URL%/*}/${DB}"
 psql "$DEMO_URL" -X -q -v ON_ERROR_STOP=1 -f db/001_schema.sql
 psql "$DEMO_URL" -X -q -v ON_ERROR_STOP=1 -f db/003_calendar_absences.sql
-psql "$DEMO_URL" -X -f examples/demo-day.sql | tee "$OUT/demo-day.txt"
+# токены печатаются в терминал, но в сохраняемый артефакт идут замаскированными
+psql "$DEMO_URL" -X -f examples/demo-day.sql | tee "$OUT/demo-day.raw" 
+sed -E 's/[0-9a-f]{64}/<значение токена показано один раз в терминале>/g' "$OUT/demo-day.raw" > "$OUT/demo-day.txt"
+rm -f "$OUT/demo-day.raw"
 DATABASE_URL="$DEMO_URL" node examples/render-report.mjs
 DATABASE_URL="$DEMO_URL" node examples/simulate-clock-request.mjs | tee "$OUT/simulated-http.txt"
 CHROME="${CHROME:-$(command -v chromium || command -v google-chrome || ls /opt/pw-browsers/chromium_headless_shell-*/chrome-linux/headless_shell 2>/dev/null | head -1 || true)}"

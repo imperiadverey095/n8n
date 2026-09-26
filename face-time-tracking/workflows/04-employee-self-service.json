@@ -365,7 +365,7 @@
         "toEmail": "={{ $('Config').first().json.hrEmail }}",
         "subject": "=[Учёт времени] Запрос на корректировку от {{ $json.request.employee_id }}",
         "emailFormat": "html",
-        "html": "=<p>Сотрудник <b>{{ $json.request.employee_id }}</b> запросил корректировку отметки.</p><ul><li>Действие: {{ $json.request.action }}</li><li>Событие: {{ $json.request.event_id ?? \"—\" }}</li><li>Тип: {{ $json.request.requested_type ?? \"—\" }}</li><li>Время: {{ $json.request.requested_time ?? \"—\" }}</li><li>Причина: {{ $json.request.reason }}</li></ul><p>ID запроса: <code>{{ $json.request.id }}</code>. Рассмотрите его через <code>POST /webhook/timetrack/hr/corrections/review</code>.</p>",
+        "html": "=<p>Сотрудник <b>{{ $json.request.employee_id }}</b> запросил корректировку отметки.</p><ul><li>Действие: {{ $json.request.action }}</li><li>Событие: {{ $json.request.event_id ?? \"—\" }}</li><li>Тип: {{ $json.request.requested_type ?? \"—\" }}</li><li>Время: {{ $json.request.requested_time ?? \"—\" }}</li><li>Причина: {{ String($json.request.reason ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul><p>ID запроса: <code>{{ $json.request.id }}</code>. Рассмотрите его через <code>POST /webhook/timetrack/hr/corrections/review</code>.</p>",
         "options": {
           "appendAttribution": false
         }
@@ -796,7 +796,7 @@
         "toEmail": "={{ $json.email }}",
         "subject": "=[Учёт времени] Ваш запрос на корректировку {{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}",
         "emailFormat": "html",
-        "html": "=<p>Здравствуйте, {{ $json.full_name }}!</p><p>Ваш запрос на корректировку отметки <b>{{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}</b>.</p><ul><li>Действие: {{ $('Review Correction').first().json.request.action }}</li><li>Время: {{ $('Review Correction').first().json.request.requested_time ?? '—' }}</li><li>Комментарий HR: {{ $('Review Correction').first().json.request.review_comment ?? '—' }}</li></ul>",
+        "html": "=<p>Здравствуйте, {{ $json.full_name }}!</p><p>Ваш запрос на корректировку отметки <b>{{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}</b>.</p><ul><li>Действие: {{ $('Review Correction').first().json.request.action }}</li><li>Время: {{ $('Review Correction').first().json.request.requested_time ?? '—' }}</li><li>Комментарий HR: {{ String($('Review Correction').first().json.request.review_comment ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul>",
         "options": {
           "appendAttribution": false
         }

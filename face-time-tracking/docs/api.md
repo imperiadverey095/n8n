@@ -21,7 +21,7 @@
 
 | Поле | Обяз. | Описание |
 |---|---|---|
-| `image` (файл) / `image_base64` | да | снимок лица (JPEG/PNG). В multipart — поле **`image`** |
+| `image` (файл) / `image_base64` | да | снимок лица (JPEG/PNG). В multipart — поле **`image`**. Предпочитайте multipart: при передаче `image_base64` снимок попадает в данные выполнения n8n и хранится там до очистки (`EXECUTIONS_DATA_MAX_AGE`), тогда как из multipart он идёт мимо JSON |
 | `event_type` | нет | `check_in`, `check_out` или `auto` (по умолчанию: чередование) |
 | `request_id` | нет | ключ идемпотентности (повтор запроса вернёт то же событие, `duplicate: true`) |
 | `device_id`, `location` | нет | идентификатор терминала и место |
@@ -62,7 +62,7 @@ JSON: `{ "event_type": "check_in|check_out|auto", "request_id": "...", "location
 | `full_name` | да | ФИО |
 | `consent_granted` | да | должно быть `true` — факт получения согласия на обработку биометрии |
 | `consent_document_ref`, `consent_via` | нет | реквизиты подписанного согласия и способ получения |
-| `image` / `image_base64` | да | фронтальный снимок для регистрации |
+| `image` / `image_base64` | да | фронтальный снимок для регистрации. Тот же довод в пользу multipart, что и для отметки |
 | `email`, `department`, `position`, `hr_external_id` | нет | атрибуты |
 | `timezone` | нет | IANA, например `Europe/Moscow` (по умолчанию `UTC`) |
 | `work_schedule` | нет | `{"start":"09:00","end":"18:00","days":[1,2,3,4,5],"break_minutes":60}` (дни — ISO: 1 = пн) |

@@ -92,7 +92,7 @@ export function build() {
 				'=<p>Сотрудник <b>{{ $json.request.employee_id }}</b> запросил корректировку отметки.</p>' +
 				'<ul><li>Действие: {{ $json.request.action }}</li><li>Событие: {{ $json.request.event_id ?? "—" }}</li>' +
 				'<li>Тип: {{ $json.request.requested_type ?? "—" }}</li><li>Время: {{ $json.request.requested_time ?? "—" }}</li>' +
-				'<li>Причина: {{ $json.request.reason }}</li></ul>' +
+				`<li>Причина: {{ String($json.request.reason ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul>` +
 				'<p>ID запроса: <code>{{ $json.request.id }}</code>. Рассмотрите его через <code>POST /webhook/timetrack/hr/corrections/review</code>.</p>',
 			notes: 'Если SMTP не настроен, нода пропускается (continue on error) и запрос всё равно создаётся.',
 		}),
@@ -188,7 +188,7 @@ export function build() {
 				"=<p>Здравствуйте, {{ $json.full_name }}!</p><p>Ваш запрос на корректировку отметки <b>{{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}</b>." +
 				"</p><ul><li>Действие: {{ $('Review Correction').first().json.request.action }}</li>" +
 				"<li>Время: {{ $('Review Correction').first().json.request.requested_time ?? '—' }}</li>" +
-				"<li>Комментарий HR: {{ $('Review Correction').first().json.request.review_comment ?? '—' }}</li></ul>",
+				`<li>Комментарий HR: {{ String($('Review Correction').first().json.request.review_comment ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul>`,
 		}),
 	);
 	wf.add(

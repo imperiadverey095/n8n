@@ -39,9 +39,9 @@ curl -X POST https://n8n.example.com/webhook/timetrack/employees/enroll \
 
 ```
        client        |   role   |                              token
- Kiosk main entrance | device   | 072906e906504944a0c18442f69756e4ab5b0354b4de4639a9442bf1a38efcc5
- EMP-003 mobile      | employee | 361dfd4d25414e6894ee1e4e6397e5099c723e5ed71e47e491a08b4e540db469
- HR portal           | hr       | 33098452c2ab46fd85f22d9e75a447eefb039904ba1b4893a50d8573a1d7b0c8
+ Kiosk main entrance | device   | <значение токена показано один раз в терминале>
+ EMP-003 mobile      | employee | <значение токена показано один раз в терминале>
+ HR portal           | hr       | <значение токена показано один раз в терминале>
 --- как это хранится ---
         name         |   role   | employee_id |      token_hash
  Kiosk main entrance | device   | ∅           | 6577e62dd02bdcbe887a…

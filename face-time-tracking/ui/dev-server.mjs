@@ -28,13 +28,40 @@ if (!DB) {
 	process.exit(1);
 }
 
+// Строка подключения разбирается в переменные окружения и НЕ передаётся psql
+// аргументом: Node включает всю командную строку в текст ошибки execFile,
+// и пароль утёк бы вместе с ней.
+function connectionEnv(url) {
+	try {
+		const u = new URL(url);
+		const env = { ...process.env };
+		if (u.hostname) env.PGHOST = decodeURIComponent(u.hostname);
+		if (u.port) env.PGPORT = u.port;
+		if (u.username) env.PGUSER = decodeURIComponent(u.username);
+		if (u.password) env.PGPASSWORD = decodeURIComponent(u.password);
+		const db = u.pathname.replace(/^\//, '');
+		if (db) env.PGDATABASE = decodeURIComponent(db);
+		for (const [key, value] of u.searchParams) {
+			if (key === 'host') env.PGHOST = value;
+			if (key === 'port') env.PGPORT = value;
+		}
+		return env;
+	} catch {
+		return null;
+	}
+}
+const PG_ENV = connectionEnv(DB);
+const mask = (text) => String(text).replace(/(postgres(?:ql)?:\/\/[^:@\s]*:)[^@\s]*(@)/g, '$1***$2');
+
 const lit = (v) =>
 	v === null || v === undefined ? 'NULL' : `'${String(typeof v === 'object' ? JSON.stringify(v) : v).replace(/'/g, "''")}'`;
 
 async function sql(query) {
-	const { stdout } = await execFileAsync('psql', [DB, '-X', '-At', '-v', 'ON_ERROR_STOP=1', '-c', query], {
-		maxBuffer: 32 * 1024 * 1024,
-	});
+	const args = ['-X', '-At', '-v', 'ON_ERROR_STOP=1', '-c', query];
+	const options = { maxBuffer: 32 * 1024 * 1024 };
+	if (PG_ENV) options.env = PG_ENV;
+	else args.unshift(DB);
+	const { stdout } = await execFileAsync('psql', args, options);
 	return stdout.trim();
 }
 const one = async (query) => {
@@ -229,8 +256,11 @@ const server = createServer(async (req, res) => {
 
 		json(res, 404, { ok: false, code: 'not_found', path });
 	} catch (e) {
-		json(res, 500, { ok: false, code: 'server_error', message: String(e.message || e).slice(0, 500) });
+		// Клиенту — только код: в тексте ошибки psql оказываются SQL-запрос,
+		// пути на диске и (при запуске со строкой в argv) строка подключения.
+		console.error('[dev-server]', req.method, path, '→', mask(e.message || e));
+		json(res, 500, { ok: false, code: 'server_error' });
 	}
 });
 
-server.listen(PORT, () => console.log(`dev-server: http://localhost:${PORT}/kiosk.html  (БД: ${DB.replace(/:[^:@/]*@/, ':***@')})`));
+server.listen(PORT, () => console.log(`dev-server: http://localhost:${PORT}/kiosk.html  (БД: ${mask(DB)})`));

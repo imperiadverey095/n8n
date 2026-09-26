@@ -76,7 +76,7 @@ let cfg = (() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } ca
 
 const fmtMin = (m) => Math.floor((m||0)/60) + ':' + String((m||0)%60).padStart(2,'0');
 const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString('ru-RU', { dateStyle:'short', timeStyle:'short' }) : '';
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const msg = (el, text, kind) => { el.textContent = text; el.className = 'msg ' + (kind || ''); };
 
 async function api(path, options = {}) {

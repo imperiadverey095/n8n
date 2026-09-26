@@ -73,6 +73,8 @@ docker compose up -d                 # n8n: http://localhost:5678, CompreFace: h
 docker compose logs postgres | grep -A6 token_kind   # демо-токены печатаются при инициализации БД
 ```
 
+Демо-токены попадают в журнал контейнера, поэтому так делают только на стенде: для рабочей установки закомментируйте монтирование `db/002_seed_demo.sql` в `docker-compose.yml` и выпускайте токены через `fn_issue_token`.
+
 1. **CompreFace**: откройте http://localhost:8000, зарегистрируйтесь, создайте приложение и сервис типа *Recognition*, скопируйте его API-ключ.
 2. **Credentials в n8n** (имена важны — воркфлоу ссылаются на них):
    * `Timetrack Postgres` — Postgres: host `postgres`, db `timetrack`, user/password из `.env`;

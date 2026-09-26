@@ -79,8 +79,8 @@ services:
     image: ${CF_REGISTRY:-exadel/}compreface-postgres-db:${CF_VERSION:-1.2.0}
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${CF_DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:-postgres}
+      POSTGRES_USER: ${CF_DB_USER:-compreface}
+      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:?set CF_DB_PASSWORD in .env}
       POSTGRES_DB: frs
     volumes:
       - compreface-postgres:/var/lib/postgresql/data
@@ -92,8 +92,8 @@ services:
       - compreface-postgres-db
       - compreface-api
     environment:
-      POSTGRES_USER: ${CF_DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:-postgres}
+      POSTGRES_USER: ${CF_DB_USER:-compreface}
+      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:?set CF_DB_PASSWORD in .env}
       POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
       SPRING_PROFILES_ACTIVE: dev
       ENABLE_EMAIL_SERVER: "false"
@@ -107,8 +107,8 @@ services:
     depends_on:
       - compreface-postgres-db
     environment:
-      POSTGRES_USER: ${CF_DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:-postgres}
+      POSTGRES_USER: ${CF_DB_USER:-compreface}
+      POSTGRES_PASSWORD: ${CF_DB_PASSWORD:?set CF_DB_PASSWORD in .env}
       POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
       SPRING_PROFILES_ACTIVE: dev
       API_JAVA_OPTS: ${CF_API_JAVA_OPTS:--Xmx2g}
