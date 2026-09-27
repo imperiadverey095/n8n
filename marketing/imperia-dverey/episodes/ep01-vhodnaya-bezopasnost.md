@@ -13,7 +13,7 @@
 
 ## Раскадровка
 Постоянные фрагменты промтов:
-- `HERO` = `the same man as in the reference images (identical face, beard and hairstyle), calm confident door expert in his 40s, dark graphite shirt under a dark tailored blazer`
+- `HERO` = `the same man as in the reference images (identical face, full thick black beard, dark tinted sunglasses always on), calm confident door expert, black relaxed shirt, black trousers, wristwatch`
 - `LOOK` = `vertical 9:16, photorealistic, cinematic premium commercial, warm 3500K key light with soft rim light, shallow depth of field, 4k detail`
 
 | # | Время | Тип | Речь героя / закадровый голос | Текст на экране | Звук |
