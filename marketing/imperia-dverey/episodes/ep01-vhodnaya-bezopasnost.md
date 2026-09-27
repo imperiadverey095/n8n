@@ -12,8 +12,8 @@
 3. «Не покупайте входную дверь, пока не посмотрите на её срез.»
 
 ## Раскадровка
-Постоянные фрагменты промтов:
-- `HERO` = `the same man as in the reference images (identical face, full thick black beard, dark tinted sunglasses always on), calm confident door expert, black relaxed shirt, black trousers, wristwatch`
+Постоянные фрагменты промтов (во всех кадрах с героем в `image_references` добавлять эталонный лист `3728fb44-8906-4bc1-956d-4a9945e653cd`):
+- `HERO` = `<<<d62029c0-5662-4f6d-b949-a463dcdaa6b3>>> (identical face, full thick black beard, square dark sunglasses always on), calm confident door expert, black oversized t-shirt, black trousers, black shoes, wristwatch`
 - `LOOK` = `vertical 9:16, photorealistic, cinematic premium commercial, warm 3500K key light with soft rim light, shallow depth of field, 4k detail`
 
 | # | Время | Тип | Речь героя / закадровый голос | Текст на экране | Звук |
