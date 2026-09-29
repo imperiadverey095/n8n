@@ -1,5 +1,5 @@
 import {
-	WorkflowBuilder, webhook, respondJson, respondFirstItem, respondText, respondBinary, postgres, code, ifNode,
+	WorkflowBuilder, RETENTION, webhook, respondJson, respondFirstItem, respondText, respondBinary, postgres, code, ifNode,
 	setNode, switchNode, convertToCsv, authenticate, unauthorized, truthy, conditions, cond,
 } from '../lib/builder.mjs';
 
@@ -295,6 +295,8 @@ export function build() {
 		name: 'Timetrack 03 — Attendance Reports',
 		description: 'Табели и отчёты по посещаемости по запросу: standard / detailed / summary в json, csv или html',
 		tags: ['timetrack'],
+		// Отчёты содержат имена и время прихода — успешные выполнения не храним.
+		retention: RETENTION.personalData,
 	});
 
 	wf.sticky(

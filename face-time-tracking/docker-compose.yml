@@ -61,14 +61,25 @@ services:
       DB_POSTGRESDB_DATABASE: n8n
       DB_POSTGRESDB_USER: ${TT_DB_USER:-timetrack}
       DB_POSTGRESDB_PASSWORD: ${TT_DB_PASSWORD}
-      # приватность: не держать данные выполнений (в них могут быть снимки, присланные как base64) дольше 7 дней
+      # приватность: не держать данные выполнений дольше 7 дней
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
       EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-50000}
+      # Снимки лиц не должны попадать на постоянный носитель. Загруженный файл n8n
+      # пишет в хранилище бинарных данных даже при multipart и держит его, пока жива
+      # запись о выполнении. Поэтому хранилище вынесено в tmpfs (см. tmpfs ниже), а
+      # выполнения воркфлоу с биометрией не сохраняются: n8n удаляет их вместе со
+      # снимком при ближайшей очистке. Перезапуск контейнера стирает всё.
       N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_BINARY_DATA_STORAGE_PATH: /n8n-binary
+      EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL: ${EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL:-5}
       N8N_PAYLOAD_SIZE_MAX: ${N8N_PAYLOAD_SIZE_MAX:-16}
       N8N_RUNNERS_ENABLED: "true"
       N8N_DIAGNOSTICS_ENABLED: "false"
+    # Хранилище бинарных данных в памяти: снимки не переживают ни очистку, ни перезапуск.
+    # Образ n8n работает от пользователя node (uid 1000).
+    tmpfs:
+      - /n8n-binary:size=512m,mode=0700,uid=1000,gid=1000
     volumes:
       - n8n-data:/home/node/.n8n
       # воркфлоу для импорта командой: docker compose exec n8n n8n import:workflow --separate --input=/workflows

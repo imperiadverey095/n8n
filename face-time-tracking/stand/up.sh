@@ -13,8 +13,13 @@ start_stub() {           # имя_файла порт человекочитае
 	local file=$1 port=$2 title=$3
 	if busy "$port"; then echo "  $title уже слушает :$port"; return 0; fi
 	nohup node "./$file" > "$STAND_HOME/$(basename "$file" .mjs).log" 2>&1 &
-	sleep 1
-	busy "$port" && echo "  $title поднят на :$port" || echo "  $title НЕ поднялся, см. $STAND_HOME/$(basename "$file" .mjs).log"
+	# На холодном старте node поднимается дольше секунды, поэтому ждём порт с
+	# запасом, а не проверяем один раз: иначе живая служба объявляется упавшей.
+	for _ in $(seq 1 20); do
+		busy "$port" && { echo "  $title поднят на :$port"; return 0; }
+		sleep 0.5
+	done
+	echo "  $title НЕ поднялся, см. $STAND_HOME/$(basename "$file" .mjs).log"
 }
 
 echo "== PostgreSQL"

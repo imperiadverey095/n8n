@@ -1,5 +1,5 @@
 import {
-	WorkflowBuilder, CREDENTIALS, webhook, respondJson, postgres, code, ifNode, setNode,
+	WorkflowBuilder, RETENTION, CREDENTIALS, webhook, respondJson, postgres, code, ifNode, setNode,
 	httpRequest, cryptoHashBinary, authenticate, unauthorized, truthy,
 } from '../lib/builder.mjs';
 
@@ -103,6 +103,9 @@ export function build() {
 		name: 'Timetrack 01 — Employee Enrollment',
 		description: 'Регистрация сотрудника и его лица (с фиксацией согласия), отзыв биометрии',
 		tags: ['timetrack'],
+		// Через этот воркфлоу идёт снимок для регистрации — историю не храним, иначе
+		// он остаётся на диске в данных выполнения.
+		retention: RETENTION.biometric,
 	});
 
 	wf.sticky(

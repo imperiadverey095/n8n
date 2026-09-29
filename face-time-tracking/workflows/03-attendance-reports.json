@@ -612,7 +612,7 @@
     "saveManualExecutions": true,
     "saveExecutionProgress": false,
     "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all",
+    "saveDataSuccessExecution": "none",
     "timezone": "UTC"
   },
   "pinData": {},

@@ -1,5 +1,5 @@
 import {
-	WorkflowBuilder, CREDENTIALS, webhook, respondJson, postgres, code, ifNode, setNode,
+	WorkflowBuilder, RETENTION, CREDENTIALS, webhook, respondJson, postgres, code, ifNode, setNode,
 	httpRequest, cryptoHashBinary, authenticate, unauthorized, truthy,
 } from '../lib/builder.mjs';
 
@@ -117,6 +117,9 @@ export function build() {
 		name: 'Timetrack 02 — Face Clock In/Out',
 		description: 'Отметка прихода/ухода по фото (CompreFace) и ручная отметка по личному токену',
 		tags: ['timetrack'],
+		// Через этот воркфлоу идёт снимок с терминала — историю не храним, иначе
+		// каждая отметка оставляет фото на диске.
+		retention: RETENTION.biometric,
 	});
 
 	wf.sticky(

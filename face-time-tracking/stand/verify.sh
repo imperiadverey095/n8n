@@ -20,3 +20,7 @@ psql "$DB" -X -c "SELECT status, count(*) FROM timetrack.hr_sync_outbox GROUP BY
 echo "== Журнал аудита (последние 12)"
 psql "$DB" -X -c "SELECT to_char(occurred_at AT TIME ZONE 'Europe/Moscow','HH24:MI:SS') AS msk, actor, actor_role, action, entity_type, entity_id
   FROM timetrack.audit_log ORDER BY id DESC LIMIT 12"
+
+# Обещание «снимки не сохраняются» проверяется здесь же: код выхода verify.sh
+# ненулевой, если в хранилище n8n нашлось хоть одно изображение.
+./check-no-images.sh

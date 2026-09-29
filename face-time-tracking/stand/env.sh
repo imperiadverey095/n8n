@@ -61,6 +61,11 @@ export N8N_VERSION_NOTIFICATIONS_ENABLED=false
 export N8N_TEMPLATES_ENABLED=false
 export N8N_SECURE_COOKIE=false
 export N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+# Снимки не должны попадать на постоянный носитель: хранилище бинарных данных в
+# tmpfs, а выполнения воркфлоу с биометрией не сохраняются и удаляются вместе со
+# снимком при очистке. На стенде очистка раз в минуту, чтобы проверка шла быстро.
+export N8N_BINARY_DATA_STORAGE_PATH="${N8N_BINARY_DATA_STORAGE_PATH:-/dev/shm/n8n-stand-binary}"
+export EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL="${EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL:-1}"
 export EXECUTIONS_DATA_PRUNE=true
 export EXECUTIONS_DATA_MAX_AGE=168
 export DB_SQLITE_POOL_SIZE=1

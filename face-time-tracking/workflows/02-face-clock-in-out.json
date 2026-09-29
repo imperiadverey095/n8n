@@ -959,10 +959,10 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "saveManualExecutions": true,
+    "saveManualExecutions": false,
     "saveExecutionProgress": false,
-    "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
     "timezone": "UTC"
   },
   "pinData": {},

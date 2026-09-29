@@ -57,3 +57,7 @@ curl -sS "$W/timetrack/hr/corrections?status=pending" -H "X-Api-Token: $HR_TOKEN
 step "10. Отчёт CSV (HR)"
 curl -sS "$W/timetrack/reports?type=standard&format=csv" -H "X-Api-Token: $HR_TOKEN" -o e2e-report.csv \
   && echo "сохранено: $(wc -l < e2e-report.csv) строк" && head -2 e2e-report.csv
+
+step "11. Снимки лиц не остались ни на диске, ни в памяти"
+# Возврат в каталог скриптов: выше мы работали из каталога данных стенда.
+cd "$REPO_STAND" && ./check-no-images.sh --wait

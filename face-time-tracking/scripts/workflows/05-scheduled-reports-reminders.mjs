@@ -1,5 +1,5 @@
 import {
-	WorkflowBuilder, postgres, code, filterNode, setNode, schedule, email, convertToCsv, splitOut, truthy,
+	WorkflowBuilder, RETENTION, postgres, code, filterNode, setNode, schedule, email, convertToCsv, splitOut, truthy,
 } from '../lib/builder.mjs';
 import { REPORT_LIB_JS } from './03-attendance-reports.mjs';
 
@@ -53,6 +53,8 @@ export function build() {
 		name: 'Timetrack 05 — Scheduled Reports & Reminders',
 		description: 'Ежемесячный табель для HR (CSV + HTML) и еженедельные напоминания сотрудникам о проблемных днях',
 		tags: ['timetrack'],
+		// Табели и напоминания содержат имена и время прихода — успешные выполнения не храним.
+		retention: RETENTION.personalData,
 	});
 
 	wf.sticky(

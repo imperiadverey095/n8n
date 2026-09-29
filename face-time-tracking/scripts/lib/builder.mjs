@@ -94,8 +94,30 @@ export function truthy(expression) {
 	return conditions([cond(expression, 'boolean:true', '')]);
 }
 
+/**
+ * Сколько n8n хранит о выполнении. В режиме бинарных данных `filesystem` каждый
+ * загруженный файл выполнения ложится на диск рядом с ним и живёт столько же,
+ * сколько история выполнений (EXECUTIONS_DATA_MAX_AGE). Поэтому для воркфлоу,
+ * через которые идут снимки лиц, историю не хранить совсем — иначе снимок
+ * остаётся на диске вопреки обещанию «фото нигде не сохраняются».
+ */
+export const RETENTION = {
+	// Всё хранится: безопасно для воркфлоу без персональных данных.
+	full: {},
+	// Персональные данные без биометрии (отчёты, табели): успешные выполнения не
+	// храним, ошибки храним — в них нет снимков, а без них сбой не разобрать.
+	personalData: { saveDataSuccessExecution: 'none' },
+	// Биометрия: не храним ничего. Сбои разбираются по журналу аудита и
+	// воркфлоу ошибок 00, который получает сведения об ошибке, а не данные.
+	biometric: {
+		saveDataSuccessExecution: 'none',
+		saveDataErrorExecution: 'none',
+		saveManualExecutions: false,
+	},
+};
+
 export class WorkflowBuilder {
-	constructor({ name, description = '', tags = [] }) {
+	constructor({ name, description = '', tags = [], retention = RETENTION.full }) {
 		this.name = name;
 		this.description = description;
 		this.tags = tags;
@@ -108,6 +130,7 @@ export class WorkflowBuilder {
 			saveDataErrorExecution: 'all',
 			saveDataSuccessExecution: 'all',
 			timezone: 'UTC',
+			...retention,
 		};
 	}
 
