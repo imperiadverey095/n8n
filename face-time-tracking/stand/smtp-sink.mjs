@@ -1,13 +1,26 @@
 #!/usr/bin/env node
 // Минимальный приёмник SMTP для стенда: принимает письмо и печатает его заголовки.
 import { createServer } from 'node:net';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, chmodSync, readdirSync } from 'node:fs';
 
 const PORT = Number(process.env.SMTP_PORT || process.env.PORT || 1025);
 // Письма кладём рядом с данными стенда, а не в текущий каталог.
 const MAIL_DIR = process.env.STAND_HOME ? `${process.env.STAND_HOME}/mail` : 'mail';
-mkdirSync(MAIL_DIR, { recursive: true });
+// В письмах имена сотрудников и причины корректировок — читать их может только владелец.
+mkdirSync(MAIL_DIR, { recursive: true, mode: 0o700 });
+chmodSync(MAIL_DIR, 0o700);
+// Письмо больше этого размера отклоняется, а не копится в памяти.
+const MAX_MESSAGE = 10 * 1024 * 1024;
+// Нумерация продолжается с последнего письма в каталоге: раньше счётчик начинался
+// с единицы при каждом запуске и новое письмо затирало старое с тем же номером.
+// Заодно ужесточаем права писем, оставшихся от прежних запусков.
 let count = 0;
+for (const name of readdirSync(MAIL_DIR)) {
+  const m = /^(\d+)\.eml$/.exec(name);
+  if (!m) continue;
+  count = Math.max(count, Number(m[1]));
+  chmodSync(`${MAIL_DIR}/${name}`, 0o600);
+}
 
 createServer((socket) => {
   let data = false;
@@ -17,15 +30,29 @@ createServer((socket) => {
     const text = chunk.toString('utf8');
     if (data) {
       buffer += text;
+      if (buffer.length > MAX_MESSAGE) {
+        data = false;
+        buffer = '';
+        socket.write('552 Message size exceeds limit\r\n');
+        return;
+      }
       if (buffer.includes('\r\n.\r\n')) {
         data = false;
         const body = buffer.slice(0, buffer.indexOf('\r\n.\r\n'));
         const header = (name) => (new RegExp('^' + name + ': (.*)$', 'im').exec(body) || [, ''])[1].trim();
         count += 1;
         const file = `${MAIL_DIR}/${String(count).padStart(2, '0')}.eml`;
-        writeFileSync(file, body);
-        console.log(`письмо ${count}: «${header('Subject').slice(0, 80)}» → ${header('To')} (${body.length} байт, ${file})`);
         buffer = '';
+        // flag 'wx' — создать новый файл или упасть, но не затереть существующий.
+        // Ошибка записи — отказ по SMTP, а не падение всего приёмника.
+        try {
+          writeFileSync(file, body, { mode: 0o600, flag: 'wx' });
+        } catch (err) {
+          console.log(`письмо ${count} не сохранено: ${err.code || err.message}`);
+          socket.write('451 Local error in processing\r\n');
+          return;
+        }
+        console.log(`письмо ${count}: «${header('Subject').slice(0, 80)}» → ${header('To')} (${body.length} байт, ${file})`);
         socket.write('250 OK\r\n');
       }
       return;
@@ -42,4 +69,5 @@ createServer((socket) => {
     }
   });
   socket.on('error', () => {});
-}).listen(PORT, () => console.log(`приёмник SMTP: localhost:${PORT}`));
+// Только localhost: заглушка без авторизации, наружу её открывать нельзя.
+}).listen(PORT, '127.0.0.1', () => console.log(`приёмник SMTP: 127.0.0.1:${PORT}`));

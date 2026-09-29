@@ -11,9 +11,20 @@ const API_KEY = process.env.CF_API_KEY || 'stub-recognition-key';
 const faces = new Map();   // хэш снимка → subject
 const subjects = new Map(); // subject → [image_id]
 
+// Тело больше этого размера отклоняется, а не копится в памяти.
+const MAX_BODY = 10 * 1024 * 1024;
 const readBody = (req) => new Promise((resolve, reject) => {
   const chunks = [];
-  req.on('data', (c) => chunks.push(c));
+  let size = 0;
+  req.on('data', (c) => {
+    size += c.length;
+    if (size > MAX_BODY) {
+      reject(Object.assign(new Error('payload too large'), { status: 413 }));
+      req.destroy();
+      return;
+    }
+    chunks.push(c);
+  });
   req.on('end', () => resolve(Buffer.concat(chunks)));
   req.on('error', reject);
 });
@@ -40,7 +51,7 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
-createServer(async (req, res) => {
+async function handle(req, res) {
   const url = new URL(req.url, 'http://stub');
   const log = (...a) => console.log(new Date().toISOString().slice(11, 19), req.method, url.pathname, ...a);
 
@@ -85,5 +96,16 @@ createServer(async (req, res) => {
   }
 
   json(res, 404, { message: 'Not found' });
+}
+
+// Ошибка обработчика — ответ с кодом, а не падение процесса: необработанный отказ
+// промиса в Node завершает процесс, и одна кривая заявка роняла бы заглушку.
+createServer((req, res) => {
+  handle(req, res).catch((err) => {
+    const status = err.status || (err instanceof URIError ? 400 : 500);
+    if (!res.headersSent) json(res, status, { message: status === 413 ? 'Payload too large' : 'Bad request' });
+    else res.destroy();
+  });
 // Значение ключа в журнал не пишем — журналы попадают в артефакты прогона.
-}).listen(PORT, () => console.log(`заглушка CompreFace: http://localhost:${PORT}`));
+// Только localhost: заглушка принимает снимки, наружу её открывать нельзя.
+}).listen(PORT, '127.0.0.1', () => console.log(`заглушка CompreFace: http://127.0.0.1:${PORT}`));
