@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='19' font-size='20'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E">
+<title>Учёт времени — панель отдела кадров</title>
+<style>
+  :root { --bg:#f8fafc; --card:#fff; --line:#e2e8f0; --text:#0f172a; --muted:#64748b; --accent:#2563eb;
+          --ok:#16a34a; --err:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-size:15px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 26px 0 10px; }
+  .muted { color: var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:14px; }
+  table { border-collapse: collapse; width:100%; font-size:14px; }
+  th, td { border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; vertical-align: top; }
+  th { color: var(--muted); font-weight:600; font-size:13px; white-space: nowrap; }
+  input, select, textarea, button { font: inherit; }
+  input, select { padding:10px 12px; border:1px solid var(--line); border-radius:10px; width:100%; background:#fff; color:var(--text); }
+  label { display:block; font-size:13px; color:var(--muted); } label > span { display:block; margin-bottom:4px; }
+  button { cursor:pointer; border-radius:10px; border:1px solid transparent; padding:9px 14px; }
+  .primary { background:var(--accent); color:#fff; } .ghost { background:#fff; border-color:var(--line); }
+  .approve { background:var(--ok); color:#fff; } .reject { background:var(--err); color:#fff; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .row > label { flex:1 1 170px; }
+  .msg { padding:11px 14px; border-radius:10px; margin-top:12px; display:none; }
+  .msg.ok { background:#dcfce7; color:#166534; display:block; } .msg.err { background:#fee2e2; color:#991b1b; display:block; }
+  .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .kpi b { display:block; font-size:22px; margin-top:2px; }
+  .actions { display:flex; gap:6px; }
+  .scroll { overflow-x:auto; }
+  .warnrow td { background:#fff7ed; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Панель отдела кадров</h1>
+  <p class="muted">Очередь запросов на корректировку и сводка по посещаемости. Полные табели выгружаются через <code>/webhook/timetrack/reports</code>.</p>
+
+  <div class="card" id="authCard">
+    <div class="row">
+      <label style="flex:2 1 320px"><span>HR-токен</span><input id="token" type="password" placeholder="роль hr"></label>
+      <label><span>Адрес сервиса</span><input id="baseUrl" placeholder="https://n8n.example.com"></label>
+      <button class="primary" id="loginBtn">Войти</button>
+    </div>
+    <div class="msg" id="authMsg"></div>
+  </div>
+
+  <div id="app" hidden>
+    <div class="card row">
+      <label><span>Статус запросов</span>
+        <select id="status"><option value="pending">на рассмотрении</option><option value="approved">одобренные</option><option value="rejected">отклонённые</option></select>
+      </label>
+      <label><span>Период сводки с</span><input id="from" type="date"></label>
+      <label><span>по</span><input id="to" type="date"></label>
+      <button class="ghost" id="reload">Обновить</button>
+      <button class="ghost" id="logout">Выйти</button>
+    </div>
+
+    <h2>Запросы на корректировку</h2>
+    <div class="card scroll"><table id="queue"></table><div class="msg" id="queueMsg"></div></div>
+
+    <h2>Сводка по сотрудникам</h2>
+    <div class="grid" id="kpis"></div>
+    <div class="card scroll"><table id="summary"></table></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LS = 'timetrack.hr';
+let cfg = (() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } })();
+
+const fmtMin = (m) => Math.floor((m||0)/60) + ':' + String((m||0)%60).padStart(2,'0');
+const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString('ru-RU', { dateStyle:'short', timeStyle:'short' }) : '';
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const msg = (el, text, kind) => { el.textContent = text; el.className = 'msg ' + (kind || ''); };
+
+async function api(path, options = {}) {
+  const res = await fetch(cfg.baseUrl.replace(/\/$/, '') + path, {
+    ...options, headers: { 'X-Api-Token': cfg.token, ...(options.body ? { 'Content-Type':'application/json' } : {}), ...(options.headers || {}) },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error('Неверный токен');
+  return { status: res.status, body };
+}
+
+const ACTION = { add: 'добавить отметку', change: 'исправить время', void: 'аннулировать' };
+
+async function loadQueue() {
+  const { body } = await api('/webhook/timetrack/hr/corrections?status=' + $('status').value);
+  const rows = Array.isArray(body) ? body : [];
+  const pending = $('status').value === 'pending';
+  const el = $('queue');
+  if (!rows.length) { el.innerHTML = '<tbody><tr><td class="muted">Запросов нет</td></tr></tbody>'; return; }
+  el.innerHTML = '<thead><tr><th>Создан</th><th>Сотрудник</th><th>Действие</th><th>Сейчас</th><th>Запрошено</th><th>Причина</th>'
+    + (pending ? '<th>Комментарий и решение</th>' : '<th>Решение</th>') + '</tr></thead><tbody>'
+    + rows.map((r) => `<tr class="${r.action === 'void' ? 'warnrow' : ''}">
+        <td>${fmtDateTime(r.created_at)}</td>
+        <td>${esc(r.full_name)}<br><span class="muted">${esc(r.employee_id)}${r.department ? ' · ' + esc(r.department) : ''}</span></td>
+        <td>${ACTION[r.action] || esc(r.action)}</td>
+        <td>${r.current_type ? (r.current_type === 'check_in' ? 'приход' : 'уход') + ' ' + fmtDateTime(r.current_occurred_at) : '—'}</td>
+        <td>${r.requested_type ? (r.requested_type === 'check_in' ? 'приход' : 'уход') + ' ' + fmtDateTime(r.requested_time) : '—'}</td>
+        <td>${esc(r.reason)}</td>
+        <td>${pending
+          ? `<input id="c-${r.request_id}" placeholder="комментарий" style="margin-bottom:6px">
+             <div class="actions"><button class="approve" data-id="${r.request_id}" data-decision="approved">Одобрить</button>
+             <button class="reject" data-id="${r.request_id}" data-decision="rejected">Отклонить</button></div>`
+          : `${esc(r.reviewed_by || '')} ${fmtDateTime(r.reviewed_at)}<br><span class="muted">${esc(r.review_comment || '')}</span>`}</td>
+      </tr>`).join('') + '</tbody>';
+
+  el.querySelectorAll('button[data-id]').forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const id = btn.dataset.id;
+      try {
+        const { body } = await api('/webhook/timetrack/hr/corrections/review', {
+          method: 'POST',
+          body: JSON.stringify({ request_id: id, decision: btn.dataset.decision, comment: $('c-' + id)?.value || null }),
+        });
+        if (body.ok) { msg($('queueMsg'), body.code === 'approved' ? 'Запрос одобрен, отметка создана' : 'Запрос отклонён', 'ok'); await refresh(); }
+        else { msg($('queueMsg'), 'Не удалось: ' + (body.code || 'ошибка'), 'err'); btn.disabled = false; }
+      } catch (e) { msg($('queueMsg'), e.message, 'err'); btn.disabled = false; }
+    };
+  });
+}
+
+async function loadSummary() {
+  const params = new URLSearchParams();
+  if ($('from').value) params.set('from', $('from').value);
+  if ($('to').value) params.set('to', $('to').value);
+  const { body } = await api('/webhook/timetrack/reports?' + params);
+  const rows = (body.data || []).map((r) => ({ e: r.employee, t: r.totals || {} }));
+  const sum = (key) => rows.reduce((a, r) => a + (r.t[key] || 0), 0);
+  $('kpis').innerHTML = [
+    ['Сотрудников', rows.length], ['Отработано', fmtMin(sum('worked_minutes')) + ' ч'],
+    ['Прогулов', sum('days_absent') + ' дн'], ['Незакрытых смен', sum('days_incomplete') + ' дн'],
+    ['Опозданий', sum('late_days') + ' дн'], ['Отпуск и больничный', (sum('days_vacation') + sum('days_sick_leave')) + ' дн'],
+  ].map(([k, v]) => `<div class="kpi"><span class="muted">${k}</span><b>${v}</b></div>`).join('');
+
+  $('summary').innerHTML = '<thead><tr><th>Сотрудник</th><th>Подразделение</th><th>План, ч</th><th>Факт, ч</th>'
+    + '<th>Сверхурочно, ч</th><th>Прогулы</th><th>Незакрытые</th><th>Опоздания</th><th>Отпуск</th><th>Больничный</th></tr></thead><tbody>'
+    + rows.map(({ e, t }) => `<tr><td>${esc(e.full_name)}<br><span class="muted">${esc(e.employee_id)}</span></td>
+        <td>${esc(e.department || '')}</td><td>${fmtMin(t.scheduled_minutes)}</td><td>${fmtMin(t.worked_minutes)}</td>
+        <td>${fmtMin(t.overtime_minutes)}</td><td>${t.days_absent ?? 0}</td><td>${t.days_incomplete ?? 0}</td>
+        <td>${t.late_days ?? 0}</td><td>${t.days_vacation ?? 0}</td><td>${t.days_sick_leave ?? 0}</td></tr>`).join('')
+    + '</tbody>';
+}
+
+const refresh = async () => { await loadQueue(); await loadSummary(); };
+
+$('loginBtn').onclick = async () => {
+  cfg = { token: $('token').value.trim(), baseUrl: ($('baseUrl').value.trim() || location.origin) };
+  try { await refresh(); localStorage.setItem(LS, JSON.stringify(cfg)); $('app').hidden = false; $('authCard').hidden = true; }
+  catch (e) { msg($('authMsg'), e.message || 'Не удалось получить данные', 'err'); }
+};
+$('logout').onclick = () => { localStorage.removeItem(LS); location.reload(); };
+$('reload').onclick = () => refresh().catch((e) => alert(e.message));
+$('status').onchange = () => loadQueue().catch((e) => alert(e.message));
+
+const now = new Date();
+$('from').value = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+$('to').value = now.toISOString().slice(0, 10);
+if (cfg.token) { $('token').value = cfg.token; $('baseUrl').value = cfg.baseUrl || ''; $('loginBtn').click(); }
+</script>
+</body>
+</html>

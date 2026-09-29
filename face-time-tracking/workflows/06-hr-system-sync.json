@@ -1,0 +1,1290 @@
+{
+  "id": "LeekBq1b4CShlotP",
+  "name": "Timetrack 06 — HR System Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Исходящая синхронизация (outbox → HR-система)\nКаждые 15 минут: `fn_outbox_claim()` забирает пачку событий (attendance.created/updated, employee.upserted, consent.revoked), каждое отправляется `POST` на адрес из Config; результат фиксируется `fn_outbox_mark()` (повтор с экспоненциальной паузой, после 10 попыток — dead). Формат payload описан в docs/hr-integration.md. Для другой HR-системы замените ноду Push To HR System (например, на ноду BambooHR/Personio/1C HTTP).",
+        "height": 200,
+        "width": 1500,
+        "color": 4
+      },
+      "id": "9400a3da-8aed-5e9a-9bed-2ceec0315b59",
+      "name": "Sticky Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Календарь и отсутствия\n`POST /timetrack/hr/absences` — `{ \"absences\": [ { employee_id, type: vacation|sick_leave|business_trip|remote|unpaid_leave|other, date_from, date_to, status, external_id, comment } ] }`. Отпуск и больничный перестают считаться прогулом; командировка и удалёнка засчитываются по норме.\n\n`POST /timetrack/hr/calendar` — `{ \"calendar_code\": \"ru\", \"days\": [ { day, day_type: holiday|workday|short_day, shorten_minutes, name } ] }`. Праздник отменяет норму дня, перенос делает рабочей субботу, предпраздничный сокращает норму.",
+        "height": 170,
+        "width": 1500,
+        "color": 3
+      },
+      "id": "ae04386a-0c91-5117-b97e-94bed646a9e1",
+      "name": "Sticky Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        1380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Входящая синхронизация (HR-система → справочник)\n`POST /webhook/timetrack/hr/employees` (HR/system-токен) с `{ \"employees\": [ { employee_id, full_name, email, department, position, timezone, work_schedule, hr_external_id, status } ] }`. Каждая запись проходит через `fn_upsert_employee()`; статус `terminated` запускает удаление биометрии по политике хранения (воркфлоу 07).",
+        "height": 170,
+        "width": 1500,
+        "color": 5
+      },
+      "id": "3800ca88-32b2-5b8e-b059-7d7c121395f6",
+      "name": "Sticky Note 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "4da38476-694f-52fb-80ab-5f4d2cc0fbf3",
+      "name": "Sync Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "814da20f-9947-5514-8469-6ea30e327387",
+              "name": "hrSystemUrl",
+              "value": "https://hr.example.com/api/timetrack/events",
+              "type": "string"
+            },
+            {
+              "id": "692345c9-84cc-56e5-96c8-8ec849e17207",
+              "name": "batchSize",
+              "value": 100,
+              "type": "number"
+            },
+            {
+              "id": "1dd55b86-c6be-58de-8b88-f532cfdc43f4",
+              "name": "maxAttempts",
+              "value": 10,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "f83d06d9-f913-5657-8251-32b768817afe",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "URL приёмника событий в HR-системе. Аутентификация — credential \"HR System API\" (заголовок).",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, event_kind, entity_type, entity_id, payload, attempts, created_at FROM timetrack.fn_outbox_claim($1::int)",
+        "options": {
+          "queryReplacement": "={{ [ $('Config').first().json.batchSize ] }}"
+        }
+      },
+      "id": "b57e99fc-2234-58cb-b855-293de6c648f8",
+      "name": "Claim Outbox Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.hrSystemUrl }}",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 500
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ id: $json.id, kind: $json.event_kind, entity_type: $json.entity_type, entity_id: $json.entity_id, created_at: $json.created_at, attempt: $json.attempts, data: $json.payload }) }}"
+      },
+      "id": "fbf5f8aa-fb04-5194-8cf0-a843e38da91f",
+      "name": "Push To HR System",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "timetrack-hr-api",
+          "name": "HR System API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Результат доставки одного события outbox в HR-систему.\nconst resp = $json;\nconst src = $('Claim Outbox Batch').item.json;\nconst status = Number(resp.statusCode ?? 0);\nconst ok = !resp.error && status >= 200 && status < 300;\nlet error = null;\nif (!ok) {\n  const detail = resp.error ? (resp.error.message || JSON.stringify(resp.error)) : JSON.stringify(resp.body ?? '');\n  error = ('HTTP ' + status + ' ' + String(detail)).slice(0, 1500);\n}\nreturn { json: { outbox_id: src.id, event_kind: src.event_kind, ok, error } };\n"
+      },
+      "id": "758cc87e-6d21-563c-b204-5732fd5f8949",
+      "name": "Evaluate Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT timetrack.fn_outbox_mark($1::bigint, $2::boolean, $3, $4::int) AS marked",
+        "options": {
+          "queryReplacement": "={{ [ $json.outbox_id, $json.ok === true, $json.error ?? null, $('Config').first().json.maxAttempts ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "id": "8982cdbf-7af7-5196-b4ac-84997f76b676",
+      "name": "Mark Outbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/hr/employees",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1821d165-f424-5396-8a6e-b9bf3c523b7d",
+      "name": "HR Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        940
+      ],
+      "webhookId": "b2db6759-606e-5f9b-8355-519cce56c5bd"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('HR Inbound Webhook').first().json.headers['x-api-token'] || ($('HR Inbound Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "50138c65-b591-516e-a6bf-c0a4d1310bc4",
+      "name": "Authenticate HR Sync",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        940
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "753d8099-d851-5934-92e5-3dc91c84509e",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cc0f3638-efe8-56e8-a286-8f2c5bc0d2c2",
+      "name": "Is HR System?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "3f8ced2c-34f3-52f2-b382-d83f8b726521",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Входящая синхронизация из HR-системы: { employees: [ {...}, ... ] }\nconst body = $('HR Inbound Webhook').first().json.body || {};\nconst list = Array.isArray(body.employees) ? body.employees : (Array.isArray(body) ? body : null);\nconst problems = [];\nif (!list) problems.push('employees_array_required');\nelse if (list.length === 0) problems.push('employees_empty');\nelse if (list.length > 5000) problems.push('too_many_employees');\nconst employees = (list || []).map((e) => ({\n  employee_id: String(e.employee_id ?? e.id ?? '').trim(),\n  full_name: String(e.full_name ?? e.name ?? '').trim(),\n  email: e.email ? String(e.email).trim() : null,\n  department: e.department ?? null,\n  position: e.position ?? null,\n  timezone: e.timezone ?? null,\n  work_schedule: e.work_schedule && typeof e.work_schedule === 'object' ? e.work_schedule : null,\n  hr_external_id: e.hr_external_id != null ? String(e.hr_external_id) : null,\n  status: ['active', 'inactive', 'terminated'].includes(e.status) ? e.status : null,\n}));\nconst bad = employees.filter((e) => !/^[A-Za-z0-9._-]{1,64}$/.test(e.employee_id) || e.full_name.length < 2);\nif (bad.length) problems.push('invalid_records:' + bad.length);\nreturn [{ json: { ok: problems.length === 0, problems, employees, actor: $input.first().json.client_name } }];\n"
+      },
+      "id": "c8fc13cb-4d9a-5025-9de7-e0ca6527c741",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dee34916-794c-5b43-9fd6-be36a03a3a42",
+      "name": "Payload Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'validation_failed', problems: $json.problems }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "2ffbe3e1-bb43-5074-8da5-179c8b21938c",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "employees",
+        "include": "noOtherFields",
+        "options": {}
+      },
+      "id": "8f5ab851-93ca-5dd9-8e73-5a5bea447daa",
+      "name": "Split Employees",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT employee_id, full_name, status, updated_at\n  FROM timetrack.fn_upsert_employee($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, $json.full_name, $json.email ?? null, $json.department ?? null, $json.position ?? null, $json.timezone ?? null, $json.work_schedule ?? null, $json.hr_external_id ?? null, $json.status ?? null, $('Validate Payload').first().json.actor ?? null ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "id": "a18cb051-2047-5354-a248-4dd922d1587a",
+      "name": "Upsert Employee",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        940
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst failed = items.filter((i) => i.json && i.json.error);\nreturn [{ json: {\n  ok: failed.length === 0,\n  processed: items.length,\n  updated: items.length - failed.length,\n  failed: failed.length,\n  errors: failed.slice(0, 20).map((i) => String(i.json.error && i.json.error.message ? i.json.error.message : i.json.error)),\n} }];\n"
+      },
+      "id": "8a8636d7-a5b9-5487-8af1-d67bad906890",
+      "name": "Summarize Sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "d1b671de-300b-5c84-b7e0-35a2b638cd8a",
+      "name": "Respond Sync Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/hr/absences",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "961299a2-9971-5a49-8f2c-7f1b9917bb23",
+      "name": "Absences Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        1580
+      ],
+      "webhookId": "596cfffa-484b-502a-ba9f-4ece2e7cb7b7"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Absences Webhook').first().json.headers['x-api-token'] || ($('Absences Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "357f3d40-ec27-5349-81ef-477928b0aa73",
+      "name": "Authenticate Absences",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        1580
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "753d8099-d851-5934-92e5-3dc91c84509e",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "074e0a9b-755d-506f-aa3f-414c1dcd450e",
+      "name": "Is HR? (absences)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "39a342d7-592d-5b65-8a94-d5d5f1a7e26b",
+      "name": "Respond 401 (absences)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        1780
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Входящие отсутствия: { absences: [ { employee_id, type, date_from, date_to, ... } ] }\nconst body = $('Absences Webhook').first().json.body || {};\nconst list = Array.isArray(body.absences) ? body.absences : (Array.isArray(body) ? body : null);\nconst problems = [];\nif (!list) problems.push('absences_array_required');\nelse if (list.length === 0) problems.push('absences_empty');\nelse if (list.length > 5000) problems.push('too_many_absences');\n\nconst isDate = (s) => typeof s === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));\nconst TYPES = ['vacation', 'sick_leave', 'business_trip', 'remote', 'unpaid_leave', 'other'];\nconst absences = (list || []).map((a) => ({\n  employee_id: String(a.employee_id ?? a.employee ?? '').trim(),\n  absence_type: String(a.absence_type ?? a.type ?? '').trim(),\n  date_from: a.date_from ?? a.from ?? null,\n  date_to: a.date_to ?? a.to ?? a.date_from ?? a.from ?? null,\n  status: ['planned', 'approved', 'cancelled'].includes(a.status) ? a.status : 'approved',\n  external_id: a.external_id != null ? String(a.external_id) : null,\n  comment: a.comment ?? null,\n  counts_as_worked: typeof a.counts_as_worked === 'boolean' ? a.counts_as_worked : null,\n}));\nconst bad = absences.filter((a) => !a.employee_id || !TYPES.includes(a.absence_type) || !isDate(a.date_from) || !isDate(a.date_to));\nif (bad.length) problems.push('invalid_records:' + bad.length);\n\nreturn [{ json: { ok: problems.length === 0, problems, absences, actor: $input.first().json.client_name } }];\n"
+      },
+      "id": "769988d9-8e09-54c7-a976-7f9271efd36b",
+      "name": "Validate Absences",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "90daebb6-a3e6-577c-9763-d784d3e84785",
+      "name": "Absences Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'validation_failed', problems: $json.problems }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "64dc847c-fe3d-583c-92e9-f2ef04d99008",
+      "name": "Respond 400 (absences)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        1780
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "absences",
+        "include": "noOtherFields",
+        "options": {}
+      },
+      "id": "acaa1869-43be-5209-af32-70825eb9a80f",
+      "name": "Split Absences",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ok, code, absence\n  FROM timetrack.fn_upsert_absence($1, $2, $3::date, $4::date, $5, $6, $7, $8::boolean, $9)",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, $json.absence_type, $json.date_from, $json.date_to, $json.status ?? null, $json.external_id ?? null, $json.comment ?? null, $json.counts_as_worked ?? null, $('Validate Absences').first().json.actor ?? null ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "id": "1467124c-48dd-5528-a50c-fbfe65005917",
+      "name": "Upsert Absence",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        1580
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "fn_upsert_absence: отпуск, больничный, командировка. Без external_id повтор не создаёт дубль.",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all().map((i) => i.json);\nconst failed = items.filter((i) => i && (i.ok === false || i.error));\nreturn [{ json: {\n  ok: failed.length === 0,\n  processed: items.length,\n  saved: items.length - failed.length,\n  failed: failed.length,\n  errors: failed.slice(0, 20).map((i) => i.code ?? String(i.error?.message ?? i.error)),\n} }];\n"
+      },
+      "id": "3a9ca43a-01cb-5b4c-8558-1b73d1203505",
+      "name": "Summarize Absences",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "55b48f02-e909-5fb2-9c3b-7fc040411d29",
+      "name": "Respond Absences Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/hr/calendar",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "00fa3fb0-114c-5261-9103-63925f72a103",
+      "name": "Calendar Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        2020
+      ],
+      "webhookId": "cb0c2151-5b20-5f9b-8a4f-c5b7853e57ed"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Calendar Webhook').first().json.headers['x-api-token'] || ($('Calendar Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "589c89c0-4683-5989-8aa0-315250eec7c3",
+      "name": "Authenticate Calendar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        2020
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "753d8099-d851-5934-92e5-3dc91c84509e",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "568240c7-5725-58a1-8174-31cadcaa5c20",
+      "name": "Is HR? (calendar)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        2020
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "973e0ba1-a99f-5583-b46f-011ca88a9eb9",
+      "name": "Respond 401 (calendar)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        2220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Производственный календарь: { calendar_code: \"ru\", days: [ { day, day_type, shorten_minutes, name } ] }\nconst body = $('Calendar Webhook').first().json.body || {};\nconst list = Array.isArray(body.days) ? body.days : (Array.isArray(body) ? body : null);\nconst problems = [];\nif (!list) problems.push('days_array_required');\nelse if (list.length === 0) problems.push('days_empty');\nelse if (list.length > 2000) problems.push('too_many_days');\n\nconst code = String(body.calendar_code ?? 'default').trim() || 'default';\nconst isDate = (s) => typeof s === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));\nconst days = (list || []).map((d) => ({\n  calendar_code: code,\n  day: d.day ?? d.date ?? null,\n  day_type: String(d.day_type ?? d.type ?? '').trim(),\n  shorten_minutes: Number.isFinite(Number(d.shorten_minutes)) ? Number(d.shorten_minutes) : 60,\n  name: d.name ?? null,\n}));\nconst bad = days.filter((d) => !isDate(d.day) || !['holiday', 'workday', 'short_day'].includes(d.day_type));\nif (bad.length) problems.push('invalid_records:' + bad.length);\n\nreturn [{ json: { ok: problems.length === 0, problems, days, actor: $input.first().json.client_name } }];\n"
+      },
+      "id": "c2dca8a4-3f20-51f5-a442-171d263069ec",
+      "name": "Validate Calendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        2020
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b7586cc1-9175-581b-a113-493af1f0a870",
+      "name": "Calendar Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        2020
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'validation_failed', problems: $json.problems }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "7e71ee07-8ad8-5cce-a3fa-2c5f1afcd989",
+      "name": "Respond 400 (calendar)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        2220
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "days",
+        "include": "noOtherFields",
+        "options": {}
+      },
+      "id": "5ad98f2a-907d-5fd8-9f61-fdf52150f158",
+      "name": "Split Calendar Days",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        2020
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT calendar_code, day, day_type, shorten_minutes, name\n  FROM timetrack.fn_upsert_calendar_day($1::date, $2, $3::int, $4, $5, $6)",
+        "options": {
+          "queryReplacement": "={{ [ $json.day, $json.day_type, $json.shorten_minutes ?? 0, $json.name ?? null, $json.calendar_code ?? null, $('Validate Calendar').first().json.actor ?? null ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "id": "75721024-f7fb-5243-a8cc-d4e88e3f949e",
+      "name": "Upsert Calendar Day",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        2020
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "holiday — нерабочий день, workday — перенос (рабочая суббота), short_day — предпраздничный.",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst failed = items.filter((i) => i.json && i.json.error);\nreturn [{ json: {\n  ok: failed.length === 0,\n  processed: items.length,\n  updated: items.length - failed.length,\n  failed: failed.length,\n  errors: failed.slice(0, 20).map((i) => String(i.json.error && i.json.error.message ? i.json.error.message : i.json.error)),\n} }];\n"
+      },
+      "id": "b86bf0f2-1959-5d99-9d62-5460f657f948",
+      "name": "Summarize Calendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        2020
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cae7b7f3-28b2-5ea2-9856-50ffd85b30a7",
+      "name": "Respond Calendar Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        2020
+      ]
+    }
+  ],
+  "connections": {
+    "Sync Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Claim Outbox Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Outbox Batch": {
+      "main": [
+        [
+          {
+            "node": "Push To HR System",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push To HR System": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Delivery": {
+      "main": [
+        [
+          {
+            "node": "Mark Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HR Inbound Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate HR Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate HR Sync": {
+      "main": [
+        [
+          {
+            "node": "Is HR System?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is HR System?": {
+      "main": [
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload": {
+      "main": [
+        [
+          {
+            "node": "Payload Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload Valid?": {
+      "main": [
+        [
+          {
+            "node": "Split Employees",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Employees": {
+      "main": [
+        [
+          {
+            "node": "Upsert Employee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Employee": {
+      "main": [
+        [
+          {
+            "node": "Summarize Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Sync": {
+      "main": [
+        [
+          {
+            "node": "Respond Sync Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Absences Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate Absences",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate Absences": {
+      "main": [
+        [
+          {
+            "node": "Is HR? (absences)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is HR? (absences)": {
+      "main": [
+        [
+          {
+            "node": "Validate Absences",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (absences)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Absences": {
+      "main": [
+        [
+          {
+            "node": "Absences Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Absences Valid?": {
+      "main": [
+        [
+          {
+            "node": "Split Absences",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 (absences)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Absences": {
+      "main": [
+        [
+          {
+            "node": "Upsert Absence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Absence": {
+      "main": [
+        [
+          {
+            "node": "Summarize Absences",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Absences": {
+      "main": [
+        [
+          {
+            "node": "Respond Absences Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate Calendar": {
+      "main": [
+        [
+          {
+            "node": "Is HR? (calendar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is HR? (calendar)": {
+      "main": [
+        [
+          {
+            "node": "Validate Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (calendar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Calendar": {
+      "main": [
+        [
+          {
+            "node": "Calendar Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar Valid?": {
+      "main": [
+        [
+          {
+            "node": "Split Calendar Days",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 (calendar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Calendar Days": {
+      "main": [
+        [
+          {
+            "node": "Upsert Calendar Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Calendar Day": {
+      "main": [
+        [
+          {
+            "node": "Summarize Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Calendar": {
+      "main": [
+        [
+          {
+            "node": "Respond Calendar Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Исходящая доставка событий в HR-систему (outbox) и входящая синхронизация справочника сотрудников",
+    "tags": [
+      "timetrack"
+    ]
+  },
+  "active": false
+}

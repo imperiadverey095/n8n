@@ -1,0 +1,1200 @@
+{
+  "id": "ARjckPNAMvKD75GE",
+  "name": "Timetrack 04 — Employee Self-Service",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Самообслуживание сотрудника\n* `GET /webhook/timetrack/me/records?from=&to=` — свои дни, сессии, корректировки (личный токен).\n* `POST /webhook/timetrack/me/corrections` — `{ action: add|change|void, event_id, requested_type, requested_time, reason }`. Создаёт запрос (статус pending), HR получает письмо.\n\nСотрудник видит и правит только собственные данные — область доступа задаётся токеном, а не параметрами запроса.",
+        "height": 200,
+        "width": 1400,
+        "color": 4
+      },
+      "id": "85aab1e5-59fa-57d3-b25f-425f96fbdf44",
+      "name": "Sticky Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Рассмотрение HR\n* `GET /webhook/timetrack/hr/corrections?status=pending` — очередь запросов.\n* `POST /webhook/timetrack/hr/corrections/review` — `{ request_id, decision: approved|rejected, comment }`. При одобрении `fn_review_correction()` создаёт событие с source=correction и помечает старое как corrected/voided; сотрудник получает письмо.",
+        "height": 170,
+        "width": 1400,
+        "color": 5
+      },
+      "id": "414d248d-0e5e-5520-bdd2-699ebf37e751",
+      "name": "Sticky Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "timetrack/me/records",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "604422d4-a535-5a55-a66f-1d2912f0e674",
+      "name": "My Records Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        300
+      ],
+      "webhookId": "5aada411-d974-5c6b-9a65-451e010c0f27"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('My Records Webhook').first().json.headers['x-api-token'] || ($('My Records Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "016bc236-f24f-5303-bc0b-cdee8584e61d",
+      "name": "Authenticate (records)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f8105205-ff1d-5613-bccc-b24426df7584",
+              "leftValue": "={{ $json.role === 'employee' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9d3ffd5b-eb7d-5ba9-9b69-6d8aa06939f7",
+      "name": "Is Employee? (records)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "f12e7cd3-8a98-5590-bfc4-a5a9fba157d4",
+      "name": "Respond 401 (records)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT employee, days, sessions, corrections, absences, totals\n  FROM timetrack.fn_timesheet($1, COALESCE(NULLIF($2, '')::date, CURRENT_DATE - 30),\n                              COALESCE(NULLIF($3, '')::date, CURRENT_DATE), NULL, true)",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, (/^\\d{4}-\\d{2}-\\d{2}$/.test(String($('My Records Webhook').first().json.query?.from ?? '')) ? $('My Records Webhook').first().json.query.from : ''), (/^\\d{4}-\\d{2}-\\d{2}$/.test(String($('My Records Webhook').first().json.query?.to ?? '')) ? $('My Records Webhook').first().json.query.to : '') ] }}"
+        }
+      },
+      "id": "cf158a69-f32a-5ce2-806b-010a0fa6d07e",
+      "name": "Load My Records",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1000,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "20541aee-c99c-5aba-b7ea-df6a4df0f039",
+      "name": "Respond My Records",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/me/corrections",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "91bbb620-bbf7-58ee-b5d4-d0475e7548f1",
+      "name": "Correction Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        700
+      ],
+      "webhookId": "cc04de70-8339-51ad-a5e0-6d9cfc17d5c1"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "84d0d756-0ee6-5e44-9f7c-e64925e0fdec",
+              "name": "hrEmail",
+              "value": "hr@example.com",
+              "type": "string"
+            },
+            {
+              "id": "ceace514-67fe-5cbd-a539-ec4388bd9d88",
+              "name": "fromEmail",
+              "value": "timetrack@example.com",
+              "type": "string"
+            },
+            {
+              "id": "1675f30e-ecd0-503a-ad98-e3af64d0d0d7",
+              "name": "maxCorrectionAgeDays",
+              "value": 45,
+              "type": "number"
+            },
+            {
+              "id": "89ba1638-5993-538e-828a-744a58b3aa17",
+              "name": "timezone",
+              "value": "Europe/Moscow",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "3640c341-3b7c-512b-b735-844f3ae701ee",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        700
+      ],
+      "notes": "Адрес HR для уведомлений, допустимая давность корректируемых событий и часовой пояс организации для времени в письмах.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Correction Webhook').first().json.headers['x-api-token'] || ($('Correction Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "a8b65dfc-ac50-5e99-af8c-74ba7992c453",
+      "name": "Authenticate (correction)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f8105205-ff1d-5613-bccc-b24426df7584",
+              "leftValue": "={{ $json.role === 'employee' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d90f39b8-0827-558e-ae86-7d6e0b8664ba",
+      "name": "Is Employee? (correction)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "f9690420-0895-536e-9048-bea8e030736f",
+      "name": "Respond 401 (correction)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ok, code, request\n  FROM timetrack.fn_request_correction($1, $2, NULLIF($3, '')::bigint, $4, NULLIF($5, '')::timestamptz, $6, $7, $8::int)",
+        "options": {
+          "queryReplacement": "={{ [ $json.employee_id, String($('Correction Webhook').first().json.body?.action ?? 'add'), (/^\\d+$/.test(String($('Correction Webhook').first().json.body?.event_id ?? '')) ? String($('Correction Webhook').first().json.body.event_id) : ''), $('Correction Webhook').first().json.body?.requested_type ?? null, (!Number.isNaN(Date.parse($('Correction Webhook').first().json.body?.requested_time ?? '')) ? new Date($('Correction Webhook').first().json.body.requested_time).toISOString() : ''), String($('Correction Webhook').first().json.body?.reason ?? ''), $json.client_name ?? null, $('Config').first().json.maxCorrectionAgeDays ] }}"
+        }
+      },
+      "id": "a5f462c7-9305-5434-994e-53e4b101b8b3",
+      "name": "Create Correction Request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "fn_request_correction проверяет принадлежность события, давность, дубли и обязательность причины.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1b7acd47-68c3-5bd1-ac2e-fd27a26b8638",
+      "name": "Request Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Config').first().json.fromEmail }}",
+        "toEmail": "={{ $('Config').first().json.hrEmail }}",
+        "subject": "=[Учёт времени] Запрос на корректировку от {{ $json.request.employee_id }}",
+        "emailFormat": "html",
+        "html": "=<p>Сотрудник <b>{{ $json.request.employee_id }}</b> запросил корректировку отметки.</p><ul><li>Действие: {{ ({add:'добавить отметку',change:'исправить время',void:'аннулировать отметку'})[$json.request.action] ?? $json.request.action }}</li><li>Событие: {{ $json.request.event_id ?? '—' }}</li><li>Тип: {{ ({check_in:'приход',check_out:'уход'})[$json.request.requested_type] ?? ($json.request.requested_type ?? '—') }}</li><li>Время: {{ ((t, z) => t ? DateTime.fromISO(t).setZone(z).toFormat(\"dd.MM.yyyy HH:mm\") + \" (\" + z + \")\" : \"—\")($json.request.requested_time, $('Config').first().json.timezone) }}</li><li>Причина: {{ String($json.request.reason ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul><p>ID запроса: <code>{{ $json.request.id }}</code>. Рассмотрите его через <code>POST /webhook/timetrack/hr/corrections/review</code>.</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "44b63f3a-4026-57be-901b-b460a3dddec3",
+      "name": "Notify HR",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1840,
+        700
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "timetrack-smtp",
+          "name": "Timetrack SMTP"
+        }
+      },
+      "notes": "Если SMTP не настроен, нода пропускается (continue on error) и запрос всё равно создаётся.",
+      "notesInFlow": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, code: 'created', request: $('Create Correction Request').first().json.request }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "6a2c123f-5130-5566-a1ac-e9d5e302ab0e",
+      "name": "Respond Request Created",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2120,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $json.code, message: ({ invalid_action: \"Недопустимое действие\", reason_required: \"Укажите причину (не менее 3 символов)\", event_not_found: \"Событие не найдено или принадлежит другому сотруднику\", event_not_editable: \"Событие уже скорректировано\", event_too_old: \"Событие слишком старое для корректировки\", already_pending: \"По этому событию уже есть открытый запрос\", invalid_request: \"Укажите тип и время отметки\", time_in_future: \"Время не может быть в будущем\", time_too_old: \"Слишком давняя дата\" })[$json.code] ?? $json.code }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "1be4b5f5-30a0-5e89-9e85-77379639a92e",
+      "name": "Respond Request Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "timetrack/hr/corrections",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "657e3a19-cf70-5a06-8bba-4c5b553925c4",
+      "name": "Corrections Queue Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        1340
+      ],
+      "webhookId": "35aa56fd-c185-5247-8fdb-23bd6652c5cd"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Corrections Queue Webhook').first().json.headers['x-api-token'] || ($('Corrections Queue Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "c7cc51f5-5bbd-54ff-a63a-86f222c158cf",
+      "name": "Authenticate (queue)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        1340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "753d8099-d851-5934-92e5-3dc91c84509e",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b175294c-e841-55fc-8b20-14f524453616",
+      "name": "Is HR? (queue)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        1340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "f52cc046-9cd1-57fa-a19c-fb347e03b71a",
+      "name": "Respond 401 (queue)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        1540
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id AS request_id, c.employee_id, e.full_name, e.department, c.action, c.event_id,\n       a.event_type AS current_type, a.occurred_at AS current_occurred_at,\n       c.requested_type, c.requested_time, c.reason, c.status, c.reviewed_by, c.reviewed_at,\n       c.review_comment, c.result_event_id, c.created_at\n  FROM timetrack.correction_requests c\n  JOIN timetrack.employees e ON e.employee_id = c.employee_id\n  LEFT JOIN timetrack.attendance_events a ON a.id = c.event_id\n WHERE c.status = COALESCE(NULLIF($1, ''), 'pending')\n ORDER BY c.created_at\n LIMIT 500",
+        "options": {
+          "queryReplacement": "={{ [ String($('Corrections Queue Webhook').first().json.query?.status ?? 'pending') ] }}"
+        }
+      },
+      "id": "82e3e71d-35e0-5005-b6c8-cdfaac4be417",
+      "name": "List Correction Requests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1000,
+        1340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "818e6bb9-f3f5-5168-b96c-181be94e18c3",
+      "name": "Respond Queue",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        1340
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timetrack/hr/corrections/review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ee987631-bbd2-51ce-8f27-dea6ebc74e62",
+      "name": "Review Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        1740
+      ],
+      "webhookId": "f1f9179f-96fd-55a1-ab28-4e2ce3b66e2f"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d99ecd93-0563-5320-9cbb-5708ed1a006c",
+              "name": "fromEmail",
+              "value": "timetrack@example.com",
+              "type": "string"
+            },
+            {
+              "id": "36d68fa4-6f02-5ab1-9b98-011374ecbfc6",
+              "name": "timezone",
+              "value": "Europe/Moscow",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "8a36441b-f605-5d52-8c57-12e4fb796a2d",
+      "name": "Config (review)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        1740
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, client_name, role, employee_id, location FROM timetrack.fn_authenticate($1)",
+        "options": {
+          "queryReplacement": "={{ [ (($('Review Webhook').first().json.headers['x-api-token'] || ($('Review Webhook').first().json.headers.authorization || '').replace(/^Bearer\\s+/i, '')) || '') ] }}"
+        }
+      },
+      "id": "95b7fdbd-e1c3-5216-bd70-2a660f15024f",
+      "name": "Authenticate (review)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        1740
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Токен из заголовка X-Api-Token или Authorization: Bearer. Пустой результат = неверный токен.",
+      "notesInFlow": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "753d8099-d851-5934-92e5-3dc91c84509e",
+              "leftValue": "={{ ['hr', 'system'].includes($json.role ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4271410f-9e31-5da5-b7e7-a77ea5b18bbf",
+      "name": "Is HR? (review)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        1740
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: 'unauthorized', message: 'Неверный или отсутствующий API-токен' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "3d8aeca6-b2fc-597d-b0aa-eda9dc71cade",
+      "name": "Respond 401 (review)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        1939.9999999999998
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ok, code, request, result_event FROM timetrack.fn_review_correction($1::uuid, $2, $3, $4)",
+        "options": {
+          "queryReplacement": "={{ [ (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String($('Review Webhook').first().json.body?.request_id ?? '')) ? String($('Review Webhook').first().json.body.request_id) : '00000000-0000-0000-0000-000000000000'), String($('Review Webhook').first().json.body?.decision ?? ''), $('Review Webhook').first().json.body?.comment ?? null, $json.client_name ?? null ] }}"
+        }
+      },
+      "id": "9211b106-ee2c-5867-b849-238058f69da0",
+      "name": "Review Correction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        1740
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b19538b-828c-554e-936f-e95628ed6b03",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b163e8b6-197b-5ef4-b24f-19cc26ac4e30",
+      "name": "Reviewed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        1740
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e.email, e.full_name, e.timezone FROM timetrack.employees e WHERE e.employee_id = $1",
+        "options": {
+          "queryReplacement": "={{ [ $json.request.employee_id ] }}"
+        }
+      },
+      "id": "57dab3ca-9d23-53ad-89d1-3c3c1ba86dd2",
+      "name": "Load Employee Contact",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        1740
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3f63fcdc-6933-55b6-9528-608eac82a56c",
+              "leftValue": "={{ typeof $json.email === 'string' && $json.email.includes('@') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "517693ba-e1e4-5562-98a8-a996f2e334c4",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2120,
+        1740
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Config (review)').first().json.fromEmail }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "=[Учёт времени] Ваш запрос на корректировку {{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}",
+        "emailFormat": "html",
+        "html": "=<p>Здравствуйте, {{ $json.full_name }}!</p><p>Ваш запрос на корректировку отметки <b>{{ $('Review Correction').first().json.code === 'approved' ? 'одобрен' : 'отклонён' }}</b>.</p><ul><li>Действие: {{ ({add:'добавить отметку',change:'исправить время',void:'аннулировать отметку'})[$('Review Correction').first().json.request.action] ?? $('Review Correction').first().json.request.action }}</li><li>Время: {{ ((t, z) => t ? DateTime.fromISO(t).setZone(z).toFormat(\"dd.MM.yyyy HH:mm\") + \" (\" + z + \")\" : \"—\")($('Review Correction').first().json.request.requested_time, $json.timezone || $('Config (review)').first().json.timezone) }}</li><li>Комментарий HR: {{ String($('Review Correction').first().json.request.review_comment ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }}</li></ul>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "df370278-fa00-5e8e-aa63-cf8531b396a8",
+      "name": "Notify Employee",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2400,
+        1740
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "timetrack-smtp",
+          "name": "Timetrack SMTP"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, code: $('Review Correction').first().json.code, request: $('Review Correction').first().json.request, result_event: $('Review Correction').first().json.result_event }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "0a75a2ac-2f12-54cc-b772-e9e0c310a790",
+      "name": "Respond Reviewed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        1740
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: false, code: $json.code, request: $json.request ?? null }) }}",
+        "options": {
+          "responseCode": "={{ $json.code === 'request_not_found' ? 404 : 400 }}"
+        }
+      },
+      "id": "67268c10-c051-5d7f-b527-ece5c7be8200",
+      "name": "Respond Review Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        1939.9999999999998
+      ]
+    }
+  ],
+  "connections": {
+    "My Records Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate (records)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate (records)": {
+      "main": [
+        [
+          {
+            "node": "Is Employee? (records)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Employee? (records)": {
+      "main": [
+        [
+          {
+            "node": "Load My Records",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (records)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load My Records": {
+      "main": [
+        [
+          {
+            "node": "Respond My Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Correction Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Authenticate (correction)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate (correction)": {
+      "main": [
+        [
+          {
+            "node": "Is Employee? (correction)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Employee? (correction)": {
+      "main": [
+        [
+          {
+            "node": "Create Correction Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (correction)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Correction Request": {
+      "main": [
+        [
+          {
+            "node": "Request Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Created?": {
+      "main": [
+        [
+          {
+            "node": "Notify HR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Request Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify HR": {
+      "main": [
+        [
+          {
+            "node": "Respond Request Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Corrections Queue Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate (queue)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate (queue)": {
+      "main": [
+        [
+          {
+            "node": "Is HR? (queue)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is HR? (queue)": {
+      "main": [
+        [
+          {
+            "node": "List Correction Requests",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (queue)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Correction Requests": {
+      "main": [
+        [
+          {
+            "node": "Respond Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config (review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (review)": {
+      "main": [
+        [
+          {
+            "node": "Authenticate (review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate (review)": {
+      "main": [
+        [
+          {
+            "node": "Is HR? (review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is HR? (review)": {
+      "main": [
+        [
+          {
+            "node": "Review Correction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 (review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Correction": {
+      "main": [
+        [
+          {
+            "node": "Reviewed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reviewed?": {
+      "main": [
+        [
+          {
+            "node": "Load Employee Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Review Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Employee Contact": {
+      "main": [
+        [
+          {
+            "node": "Has Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [
+          {
+            "node": "Notify Employee",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Reviewed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Employee": {
+      "main": [
+        [
+          {
+            "node": "Respond Reviewed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Личный кабинет: просмотр своих отметок, запросы на корректировку, рассмотрение HR",
+    "tags": [
+      "timetrack"
+    ]
+  },
+  "active": false
+}

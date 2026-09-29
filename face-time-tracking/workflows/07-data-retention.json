@@ -1,0 +1,348 @@
+{
+  "id": "M47D8s8w7IYfTp9X",
+  "name": "Timetrack 07 — Data Retention",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Политика хранения данных\nЕжедневно в 03:00 UTC:\n1. `fn_biometrics_due_for_deletion()` — уволенные ≥ N дней назад и отозвавшие согласие → `DELETE subject` в CompreFace → `fn_revoke_biometrics()`.\n2. Очистка журнала аудита старше auditRetentionDays и отправленных записей outbox старше outboxRetentionDays.\n3. Опционально (anonymizeEventsAfterDays > 0) — обезличивание технических полей старых событий; сами табели не удаляются.\n\nСроки — в ноде Config; согласуйте их с юристом (см. docs/privacy-compliance.md).",
+        "height": 230,
+        "width": 1400,
+        "color": 4
+      },
+      "id": "5409d0d3-94d8-53ad-ab7a-ad5a1711477e",
+      "name": "Sticky Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "70737669-82f8-5810-a123-b8b07707a7f4",
+      "name": "Retention Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9efbbb4a-70ba-5c95-bf42-6ae2f59b8276",
+              "name": "faceApiUrl",
+              "value": "http://compreface-api:8080",
+              "type": "string"
+            },
+            {
+              "id": "4cc6fa2f-8380-5653-acf7-c00bbe86b8f4",
+              "name": "daysAfterTermination",
+              "value": 30,
+              "type": "number"
+            },
+            {
+              "id": "cf4b5598-f8c4-5f8e-9fd5-9fecdc6407b3",
+              "name": "auditRetentionDays",
+              "value": 730,
+              "type": "number"
+            },
+            {
+              "id": "9173c39e-3e85-55a6-b72f-23e56c86d4af",
+              "name": "outboxRetentionDays",
+              "value": 30,
+              "type": "number"
+            },
+            {
+              "id": "e6af9272-320d-5f65-a516-8ab6c7006153",
+              "name": "anonymizeEventsAfterDays",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "c3f68cc8-5df4-5f7a-955f-afa63e8e3a6e",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT employee_id, provider, provider_subject_id, reason FROM timetrack.fn_biometrics_due_for_deletion($1::int)",
+        "options": {
+          "queryReplacement": "={{ [ $('Config').first().json.daysAfterTermination ] }}"
+        }
+      },
+      "id": "d7d9afb6-2eca-5dd3-a9cc-ef3cee7ad051",
+      "name": "Find Biometrics To Delete",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Config').first().json.faceApiUrl }}/api/v1/recognition/subjects/{{ encodeURIComponent($json.provider_subject_id) }}",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 500
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "a7a4ad79-9f44-59ca-8026-c8caac903bc8",
+      "name": "Delete Subject In Face Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "timetrack-compreface-key",
+          "name": "CompreFace Recognition API Key"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "81d9def4-b3e7-536a-87ff-094f51e3d808",
+              "leftValue": "={{ [200, 404].includes(Number($json.statusCode ?? 0)) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3d7fd4b4-1932-5f31-a7ea-386ba263e830",
+      "name": "Deleted Or Missing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT enrollments_deactivated, consents_revoked FROM timetrack.fn_revoke_biometrics($1, $2, $3, $4)",
+        "options": {
+          "queryReplacement": "={{ [ $('Find Biometrics To Delete').item.json.employee_id, 'retention:' + $('Find Biometrics To Delete').item.json.reason, 'retention-job', 'system' ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "id": "56cc892c-6934-5b9e-91db-0eda41e7f98b",
+      "name": "Revoke In Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT timetrack.fn_audit('retention-job', 'system', 'biometrics.delete_failed', 'employee', $1, $2::jsonb) AS audit_id",
+        "options": {
+          "queryReplacement": "={{ [ $('Find Biometrics To Delete').item.json.employee_id, ({ status: $json.statusCode ?? null, error: $json.error?.message ?? $json.error ?? null }) ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "id": "9930256c-c6d9-5905-be23-16a7dc1b5151",
+      "name": "Log Deletion Failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT timetrack.fn_purge_audit_log($1::int) AS audit_deleted,\n       timetrack.fn_purge_outbox($2::int)   AS outbox_deleted,\n       CASE WHEN $3::int > 0 THEN timetrack.fn_anonymize_old_events($3::int) ELSE 0 END AS events_anonymized",
+        "options": {
+          "queryReplacement": "={{ [ $('Config').first().json.auditRetentionDays, $('Config').first().json.outboxRetentionDays, $('Config').first().json.anonymizeEventsAfterDays ] }}"
+        }
+      },
+      "id": "964b8250-2eb0-5ede-83ab-444eefb2afba",
+      "name": "Purge Logs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "timetrack-postgres",
+          "name": "Timetrack Postgres"
+        }
+      },
+      "notes": "Журнал аудита, отправленный outbox и (опционально) обезличивание старых событий.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Retention Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Find Biometrics To Delete",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Purge Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Biometrics To Delete": {
+      "main": [
+        [
+          {
+            "node": "Delete Subject In Face Service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Subject In Face Service": {
+      "main": [
+        [
+          {
+            "node": "Deleted Or Missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deleted Or Missing?": {
+      "main": [
+        [
+          {
+            "node": "Revoke In Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Deletion Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Политика хранения: удаление биометрии уволенных/отозвавших согласие, очистка журналов",
+    "tags": [
+      "timetrack"
+    ]
+  },
+  "active": false
+}

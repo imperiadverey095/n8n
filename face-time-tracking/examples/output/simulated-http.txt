@@ -1,0 +1,52 @@
+
+==============================================================================
+Сценарий A. Сотрудник с согласием (EMP-002) распознан — отметка записана
+==============================================================================
+→ Терминал:  POST /webhook/timetrack/clock   (multipart/form-data, X-Api-Token: <токен терминала>)
+   поля: {"device_id":"kiosk-1","location":"Проходная","request_id":"sim-0001"}  image: photo.jpg, 22 bytes
+   n8n Prepare Request → {"ok":true,"event_type":"auto","request_id":"sim-0001","device_id":"kiosk-1","binary":["image"]}
+   n8n Recognize Face → CompreFace POST /api/v1/recognition/recognize  ⇒ HTTP 200 {"result":[{"box":{"probability":0.99971,"x_min":312,"y_min":140,"x_max":540,"y_max":410},"subjects":[{"subject":"EMP-002","similarity":0.98213}]}]}
+   n8n Interpret Recognition → {"matched":true,"code":"matched","similarity":0.98213,"http_status":200}
+   n8n Record Attendance → fn_clock → {"ok":true,"code":"recorded","event_id":7,"event_type":"check_in","occurred_at":"2026-09-26T11:57:48.531369+00:00","duplicate":false,"employee_id":"EMP-002","full_name":"Петрова Анна Сергеевна","timezone":"Europe/Moscow"}
+← Ответ терминалу: HTTP 200 {"ok":true,"code":"recorded","duplicate":false,"employee_id":"EMP-002","full_name":"Петрова Анна Сергеевна","event_type":"check_in","occurred_at":"2026-09-26T11:57:48.531369+00:00","event_id":7,"similarity":0.98213}
+
+==============================================================================
+Сценарий B. Похожее, но чужое лицо: similarity 0.71 < порога 0.90 — отказ, аудит без фото
+==============================================================================
+→ Терминал:  POST /webhook/timetrack/clock   (multipart/form-data, X-Api-Token: <токен терминала>)
+   поля: {"device_id":"kiosk-1","request_id":"sim-0002"}  image: photo.jpg, 22 bytes
+   n8n Prepare Request → {"ok":true,"event_type":"auto","request_id":"sim-0002","device_id":"kiosk-1","binary":["image"]}
+   n8n Recognize Face → CompreFace POST /api/v1/recognition/recognize  ⇒ HTTP 200 {"result":[{"box":{"probability":0.9991},"subjects":[{"subject":"EMP-001","similarity":0.71044}]}]}
+   n8n Interpret Recognition → {"matched":false,"code":"low_similarity","similarity":0.71044,"http_status":404}
+← Ответ терминалу: HTTP 404 {"ok":false,"code":"low_similarity","message":"Недостаточная схожесть лица","faces_detected":1,"request_id":"sim-0002"}
+
+==============================================================================
+Сценарий C. На снимке нет лица (терминал сработал на тень)
+==============================================================================
+→ Терминал:  POST /webhook/timetrack/clock   (multipart/form-data, X-Api-Token: <токен терминала>)
+   поля: {"device_id":"kiosk-1","request_id":"sim-0003"}  image: photo.jpg, 22 bytes
+   n8n Prepare Request → {"ok":true,"event_type":"auto","request_id":"sim-0003","device_id":"kiosk-1","binary":["image"]}
+   n8n Recognize Face → CompreFace POST /api/v1/recognition/recognize  ⇒ HTTP 400 {"message":"No face is found in the given image","code":28}
+   n8n Interpret Recognition → {"matched":false,"code":"no_face","similarity":null,"http_status":422}
+← Ответ терминалу: HTTP 422 {"ok":false,"code":"no_face","message":"На снимке не найдено лицо","faces_detected":0,"request_id":"sim-0003"}
+
+==============================================================================
+Сценарий D. Терминал передал employee_id=EMP-001, а лицо принадлежит EMP-002 — защита от подмены
+==============================================================================
+→ Терминал:  POST /webhook/timetrack/clock   (multipart/form-data, X-Api-Token: <токен терминала>)
+   поля: {"device_id":"kiosk-1","request_id":"sim-0004","employee_id":"EMP-001"}  image: photo.jpg, 22 bytes
+   n8n Prepare Request → {"ok":true,"event_type":"auto","request_id":"sim-0004","device_id":"kiosk-1","binary":["image"]}
+   n8n Recognize Face → CompreFace POST /api/v1/recognition/recognize  ⇒ HTTP 200 {"result":[{"box":{"probability":0.9995},"subjects":[{"subject":"EMP-002","similarity":0.97}]}]}
+   n8n Interpret Recognition → {"matched":false,"code":"employee_mismatch","similarity":0.97,"http_status":403}
+← Ответ терминалу: HTTP 403 {"ok":false,"code":"employee_mismatch","message":"Лицо не соответствует указанному сотруднику","faces_detected":1,"request_id":"sim-0004"}
+
+==============================================================================
+Сценарий E. Сотрудник без действующего согласия (EMP-003) — CompreFace его не знает, но даже при совпадении fn_clock откажет
+==============================================================================
+→ Терминал:  POST /webhook/timetrack/clock   (multipart/form-data, X-Api-Token: <токен терминала>)
+   поля: {"device_id":"kiosk-1","request_id":"sim-0005"}  image: photo.jpg, 22 bytes
+   n8n Prepare Request → {"ok":true,"event_type":"auto","request_id":"sim-0005","device_id":"kiosk-1","binary":["image"]}
+   n8n Recognize Face → CompreFace POST /api/v1/recognition/recognize  ⇒ HTTP 200 {"result":[{"box":{"probability":0.9995},"subjects":[{"subject":"EMP-003","similarity":0.95}]}]}
+   n8n Interpret Recognition → {"matched":true,"code":"matched","similarity":0.95,"http_status":200}
+   n8n Record Attendance → fn_clock → {"ok":false,"code":"consent_missing","event_id":null,"event_type":null,"occurred_at":null,"duplicate":false,"employee_id":"EMP-003","full_name":"Сидоров Пётр","timezone":"Europe/Moscow"}
+← Ответ терминалу: HTTP 403 {"ok":false,"code":"consent_missing","employee_id":"EMP-003"}
